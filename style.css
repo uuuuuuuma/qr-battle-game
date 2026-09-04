@@ -387,6 +387,108 @@ body {
   margin-top: 4px;
 }
 
+/* --- アクトカード --- */
+.act-card {
+  appearance: none;
+  width: 96px;
+  border-radius: 14px;
+  border: 1px solid var(--card-border);
+  background: var(--card);
+  padding: 12px 6px;
+  text-align: center;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.act-card:active {
+  transform: scale(0.96);
+}
+
+.act-card.small {
+  width: 76px;
+  padding: 8px 4px;
+}
+
+.act-card-speed {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 700;
+}
+
+.act-card-label {
+  font-size: 13px;
+  font-weight: 800;
+  margin-top: 4px;
+}
+
+.act-card.small .act-card-label {
+  font-size: 12px;
+}
+
+.act-card.card-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  color: var(--text-dim);
+  background: rgba(255,255,255,0.03);
+  cursor: default;
+}
+
+.act-card.effect-buff { border-color: #ff9f40; }
+.act-card.effect-buff .act-card-label { color: #ff9f40; }
+.act-card.effect-guard { border-color: #4dd4a3; }
+.act-card.effect-guard .act-card-label { color: #4dd4a3; }
+.act-card.effect-focus { border-color: #c792ff; }
+.act-card.effect-focus .act-card-label { color: #c792ff; }
+.act-card.effect-choice { border-color: #6c8cff; }
+.act-card.effect-choice .act-card-label { color: #6c8cff; }
+
+.card-hand-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.deck-count {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 6px;
+}
+
+.act-card-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+
+.act-card-grid .act-card {
+  width: auto;
+  padding: 8px 2px;
+  cursor: default;
+}
+
+.act-card-grid .act-card-speed {
+  font-size: 10px;
+}
+
+.act-card-grid .act-card-label {
+  font-size: 11px;
+}
+
+/* --- コマンド表選択画面 --- */
+.table-option {
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  padding: 14px;
+  background: rgba(255,255,255,0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
 .dice-display {
   font-size: 44px;
   font-weight: 800;

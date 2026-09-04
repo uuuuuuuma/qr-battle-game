@@ -9,6 +9,8 @@ const state = {
   cpuCharacter: null,
   battlePlayer: null,
   battleCpu: null,
+  playerDeck: null,
+  cpuDeck: null,
   battle: null,
   battleResult: null,
 };
@@ -65,6 +67,10 @@ function render() {
     case 'capturePhoto':
       app.innerHTML = renderCapturePhoto();
       initPhotoCapture();
+      break;
+    case 'selectCommandTable':
+      app.innerHTML = renderSelectCommandTable();
+      bindSelectCommandTable();
       break;
     case 'preview':
       app.innerHTML = renderPreview();
@@ -268,8 +274,53 @@ function finalizePlayerCharacter(dataUrl) {
   stopCamera();
   state.photoDataUrl = dataUrl;
   state.playerCharacter = generateCharacterFromText(state.qrText, 'あなた', dataUrl);
-  state.screen = 'preview';
+  state.playerCharacter.actCards = generateActCards(state.qrText, 'あなた');
+  state.screen = 'selectCommandTable';
   render();
+}
+
+// ---------- コマンド表選択画面 ----------
+
+function renderSelectCommandTable() {
+  const options = state.playerCharacter.commandTableOptions;
+  const optionsHtml = options
+    .map((table, i) => `
+      <div class="table-option">
+        <div class="section-label">候補 ${i + 1}</div>
+        ${renderCommandTable(table)}
+        <button class="btn secondary block" data-option-index="${i}">これに決める</button>
+      </div>
+    `)
+    .join('');
+  return `
+    <div class="screen">
+      <div class="top-bar">
+        <button class="icon-btn" id="backBtn">← もどる</button>
+        <div></div>
+      </div>
+      <div class="title" style="font-size:20px;">コマンド表を選ぶ</div>
+      <div class="subtitle">3つの候補から、バトルで使うコマンド表を1つ選んでください</div>
+      ${optionsHtml}
+    </div>
+  `;
+}
+
+function bindSelectCommandTable() {
+  document.getElementById('backBtn').onclick = () => {
+    state.screen = 'scanQr';
+    state.qrText = null;
+    state.photoDataUrl = null;
+    state.playerCharacter = null;
+    render();
+  };
+  document.querySelectorAll('[data-option-index]').forEach((btn) => {
+    btn.onclick = () => {
+      const idx = Number(btn.dataset.optionIndex);
+      state.playerCharacter.commandTable = state.playerCharacter.commandTableOptions[idx];
+      state.screen = 'preview';
+      render();
+    };
+  });
 }
 
 // ---------- キャラクターカード共通表示 ----------
@@ -308,6 +359,31 @@ function renderCommandTable(table, revealed) {
   return `<div class="command-table">${cells}</div>`;
 }
 
+// ---------- アクトカード共通表示 ----------
+
+function effectClass(effectType) {
+  switch (effectType) {
+    case EFFECT_TYPES.BUFF: return 'effect-buff';
+    case EFFECT_TYPES.GUARD: return 'effect-guard';
+    case EFFECT_TYPES.FOCUS: return 'effect-focus';
+    case EFFECT_TYPES.CHOICE: return 'effect-choice';
+    default: return '';
+  }
+}
+
+function renderCardFace(card, small) {
+  return `
+    <div class="act-card ${small ? 'small' : ''} ${effectClass(card.effectType)}">
+      <div class="act-card-speed">SPD ${card.speed}</div>
+      <div class="act-card-label">${escapeHtml(card.label)}</div>
+    </div>
+  `;
+}
+
+function renderCardBack() {
+  return `<div class="act-card small card-back">？</div>`;
+}
+
 // ---------- キャラ確認画面 ----------
 
 function renderPreview() {
@@ -321,6 +397,8 @@ function renderPreview() {
       ${renderCharacterCard(state.playerCharacter, false)}
       <div class="section-label">コマンド表(サイコロの目 → 行動)</div>
       ${renderCommandTable(state.playerCharacter.commandTable)}
+      <div class="section-label">アクトカード(全10枚・バトル開始時に3枚配られます)</div>
+      <div class="act-card-grid">${state.playerCharacter.actCards.map((c) => renderCardFace(c, true)).join('')}</div>
       <div class="spacer"></div>
       <button class="btn block" id="battleStartBtn">バトル開始</button>
     </div>
@@ -337,12 +415,14 @@ function bindPreview() {
   };
   document.getElementById('battleStartBtn').onclick = () => {
     state.cpuCharacter = generateCpuCharacter();
-    state.battlePlayer = { ...state.playerCharacter };
-    state.battleCpu = { ...state.cpuCharacter };
+    state.battlePlayer = { ...state.playerCharacter, focusOverrides: {} };
+    state.battleCpu = { ...state.cpuCharacter, focusOverrides: {} };
+    state.playerDeck = createDeckState(state.playerCharacter.actCards);
+    state.cpuDeck = createDeckState(state.battleCpu.actCards);
     state.battle = {
       log: [`バトル開始！ ${state.battlePlayer.name} VS ${state.battleCpu.name}`],
-      playerHand: null,
-      cpuHand: null,
+      playerCard: null,
+      cpuCard: null,
       diceValue: null,
       message: '',
       round: 1,
@@ -352,6 +432,12 @@ function bindPreview() {
       showPlayerTable: false,
       showCpuTable: false,
       cpuRevealed: new Set(),
+      playerAtkBonus: 0,
+      cpuAtkBonus: 0,
+      playerGuardMult: null,
+      cpuGuardMult: null,
+      playerChoiceFace: null,
+      cpuChoiceFace: null,
     };
     state.screen = 'battle';
     render();
@@ -391,28 +477,28 @@ function renderBattleControls(b) {
     return `<button class="btn block" id="continueBtn">▶ タップしてつぎへ</button>`;
   }
   if (!b.busy) {
-    return renderHandChoices();
+    return renderCardHandChoices();
   }
   return '<div class="subtitle">勝負中<span class="loading-dot">…</span></div>';
 }
 
 function renderArenaContent(b) {
   let html = '';
-  if (!b.busy && !b.playerHand) {
-    html += `<div>じゃんけんの手を選んでください</div>`;
+  if (!b.busy && !b.playerCard) {
+    html += `<div>アクトカードを選んでください</div>`;
   }
-  if (b.playerHand && b.cpuHand) {
+  if (b.playerCard && b.cpuCard) {
     html += `
       <div class="hands-row">
-        <div><div class="hand-display">${HAND_EMOJI[b.playerHand]}</div><div class="hand-label">あなた</div></div>
-        <div><div class="hand-display">${HAND_EMOJI[b.cpuHand]}</div><div class="hand-label">CPU</div></div>
+        <div>${renderCardFace(b.playerCard, true)}<div class="hand-label">あなた</div></div>
+        <div>${renderCardFace(b.cpuCard, true)}<div class="hand-label">CPU</div></div>
       </div>
     `;
-  } else if (b.playerHand) {
+  } else if (b.playerCard) {
     html += `
       <div class="hands-row">
-        <div><div class="hand-display">${HAND_EMOJI[b.playerHand]}</div><div class="hand-label">あなた</div></div>
-        <div><div class="hand-display">❓</div><div class="hand-label">CPU</div></div>
+        <div>${renderCardFace(b.playerCard, true)}<div class="hand-label">あなた</div></div>
+        <div>${renderCardBack()}<div class="hand-label">CPU</div></div>
       </div>
     `;
   }
@@ -425,13 +511,14 @@ function renderArenaContent(b) {
   return html;
 }
 
-function renderHandChoices() {
+function renderCardHandChoices() {
+  const hand = state.playerDeck.hand;
+  const cards = hand
+    .map((card) => `<button class="act-card ${effectClass(card.effectType)}" data-card-id="${card.id}"><div class="act-card-speed">SPD ${card.speed}</div><div class="act-card-label">${escapeHtml(card.label)}</div></button>`)
+    .join('');
   return `
-    <div class="hand-choice-row">
-      <button class="hand-btn" data-hand="グー">✊</button>
-      <button class="hand-btn" data-hand="チョキ">✌️</button>
-      <button class="hand-btn" data-hand="パー">✋</button>
-    </div>
+    <div class="card-hand-row">${cards}</div>
+    <div class="deck-count">山札 ${state.playerDeck.deck.length} ・ 捨て札 ${state.playerDeck.discard.length}</div>
   `;
 }
 
@@ -440,10 +527,10 @@ function renderLog(log) {
 }
 
 function initBattle() {
-  document.querySelectorAll('.hand-btn').forEach((btn) => {
+  document.querySelectorAll('.card-hand-row .act-card').forEach((btn) => {
     btn.onclick = () => {
       if (state.battle.busy) return;
-      onPlayerChooseHand(btn.dataset.hand);
+      onPlayerPlayCard(btn.dataset.cardId);
     };
   });
   const continueBtn = document.getElementById('continueBtn');
@@ -483,78 +570,173 @@ function onContinueClick() {
   }
 }
 
-async function onPlayerChooseHand(hand) {
+// カードの追加効果を発動する(出した瞬間に発動。「受け身」は条件成立時のみ実際に効く)
+function applyCardEffect(card, side) {
+  const b = state.battle;
+  const character = side === 'player' ? state.battlePlayer : state.battleCpu;
+  const label = side === 'player' ? 'あなた' : 'CPU';
+  switch (card.effectType) {
+    case EFFECT_TYPES.BUFF: {
+      if (side === 'player') b.playerAtkBonus = card.n;
+      else b.cpuAtkBonus = card.n;
+      addLog(`${label}: 「${card.label}」発動！ このラウンドの攻撃力+${card.n}`);
+      break;
+    }
+    case EFFECT_TYPES.GUARD: {
+      const mult = card.n * 0.1;
+      if (side === 'player') b.playerGuardMult = mult;
+      else b.cpuGuardMult = mult;
+      addLog(`${label}: 「${card.label}」発動！ 攻撃できなかった場合ダメージ${Math.round(mult * 100)}%に軽減`);
+      break;
+    }
+    case EFFECT_TYPES.FOCUS: {
+      character.focusOverrides[card.n - 1] = b.round + 1;
+      addLog(`${label}: 「${card.label}」発動！ 出目${card.n}が次のラウンド終了時までクリティカルに変化`);
+      break;
+    }
+    case EFFECT_TYPES.CHOICE: {
+      if (side === 'player') b.playerChoiceFace = card.n;
+      else b.cpuChoiceFace = card.n;
+      addLog(`${label}: 「${card.label}」発動！ 攻撃時はサイコロを振らず出目${card.n}を使用`);
+      break;
+    }
+  }
+}
+
+// 「集中」で書き換えられた面をクリティカル扱いにしたコマンド表を返す
+function getEffectiveCommandTable(character) {
+  return character.commandTable.map((cmd, i) => (
+    character.focusOverrides[i] !== undefined ? COMMAND_TYPES.CRITICAL : cmd
+  ));
+}
+
+// 期限切れの「集中」効果を取り除く(upcomingRound はこれから始まるラウンド番号)
+function pruneFocusOverrides(character, upcomingRound) {
+  Object.keys(character.focusOverrides).forEach((faceIndex) => {
+    if (upcomingRound > character.focusOverrides[faceIndex]) {
+      delete character.focusOverrides[faceIndex];
+    }
+  });
+}
+
+async function onPlayerPlayCard(cardId) {
   const b = state.battle;
   b.busy = true;
-  b.playerHand = hand;
-  b.cpuHand = null;
+
+  const playerCard = playCard(state.playerDeck, cardId);
+  b.playerCard = playerCard;
+  b.cpuCard = null;
   b.diceValue = null;
   b.message = '';
   b.arenaColor = null;
   render();
 
   await wait(400);
-  const cpuHand = randomHand();
-  b.cpuHand = cpuHand;
+  const cpuHandCard = pickCpuCard(state.cpuDeck);
+  const cpuCard = playCard(state.cpuDeck, cpuHandCard.id);
+  b.cpuCard = cpuCard;
   render();
 
   await wait(500);
-  const result = judgeJanken(hand, cpuHand);
 
-  if (result === 'draw') {
-    addLog(`あいこ！ (${hand} vs ${cpuHand})`);
-    b.message = 'あいこ！もう一度';
+  b.playerAtkBonus = 0;
+  b.cpuAtkBonus = 0;
+  b.playerGuardMult = null;
+  b.cpuGuardMult = null;
+  b.playerChoiceFace = null;
+  b.cpuChoiceFace = null;
+  applyCardEffect(playerCard, 'player');
+  applyCardEffect(cpuCard, 'cpu');
+  b.message = 'アクトカードの効果が発動！';
+  render();
+  await wait(800);
+
+  if (playerCard.speed === cpuCard.speed) {
+    addLog(`スピード${playerCard.speed}で同速！ このラウンドはどちらも攻撃できない`);
+    b.message = `同速(${playerCard.speed})…このラウンドは攻撃なし`;
+    b.awaitingContinue = true;
     render();
-    await wait(800);
-    b.playerHand = null;
-    b.cpuHand = null;
-    b.message = '';
-    b.busy = false;
-    render();
+    await waitForContinueClick();
+    b.awaitingContinue = false;
+    finishRound(null);
     return;
   }
 
-  const winnerIsPlayer = result === 'player';
+  const winnerIsPlayer = playerCard.speed > cpuCard.speed;
   b.arenaColor = winnerIsPlayer ? '#239dda' : '#e60012';
-  addLog(`じゃんけん: ${winnerIsPlayer ? 'あなた' : 'CPU'}の勝ち！ (${hand} vs ${cpuHand})`);
-  b.message = winnerIsPlayer ? 'じゃんけんに勝った！ あなたの攻撃！' : 'じゃんけんに負けた… CPUの攻撃！';
+  addLog(`スピード勝負: ${winnerIsPlayer ? 'あなた' : 'CPU'}の勝ち！ (${playerCard.speed} vs ${cpuCard.speed})`);
+  b.message = winnerIsPlayer ? 'スピード勝ち！ あなたの攻撃！' : 'スピード負け… CPUの攻撃！';
   render();
   await wait(700);
 
   const attacker = winnerIsPlayer ? state.battlePlayer : state.battleCpu;
   const defender = winnerIsPlayer ? state.battleCpu : state.battlePlayer;
+  const attackerLabel = winnerIsPlayer ? 'あなた' : 'CPU';
+  const choiceFace = winnerIsPlayer ? b.playerChoiceFace : b.cpuChoiceFace;
+  const effectiveTable = getEffectiveCommandTable(attacker);
 
-  const dice = rollDice();
-  b.diceValue = dice;
-  b.message = `${attacker.name}がサイコロを振った…`;
-  render();
-  await wait(600);
+  let dice;
+  if (choiceFace) {
+    dice = choiceFace;
+    b.diceValue = dice;
+    b.message = `${attackerLabel}は「チョイス${choiceFace}」で出目${choiceFace}を使用！`;
+    render();
+    await wait(600);
+  } else {
+    dice = rollDice();
+    b.diceValue = dice;
+    b.message = `${attackerLabel}がサイコロを振った…`;
+    render();
+    await wait(600);
+  }
 
   if (!winnerIsPlayer) {
     b.cpuRevealed.add(dice - 1);
   }
 
-  const command = attacker.commandTable[dice - 1];
-  const { damage, message } = resolveCommand(command, attacker.atk);
-  defender.hp = Math.max(0, defender.hp - damage);
-  addLog(`${attacker.name}: 出目${dice} → ${message}`);
-  b.message = message;
+  const command = effectiveTable[dice - 1];
+  const atkBonus = winnerIsPlayer ? b.playerAtkBonus : b.cpuAtkBonus;
+  const { damage: baseDamage, label } = resolveCommand(command, attacker.atk + atkBonus);
+  const defenderGuardMult = winnerIsPlayer ? b.cpuGuardMult : b.playerGuardMult;
+  let finalDamage = baseDamage;
+  let guardApplied = false;
+  if (defenderGuardMult !== null) {
+    finalDamage = Math.round(baseDamage * defenderGuardMult);
+    guardApplied = true;
+  }
+  defender.hp = Math.max(0, defender.hp - finalDamage);
+
+  const resultText = command === COMMAND_TYPES.MISS
+    ? '「ミス」…このラウンドは何も起こらなかった'
+    : `「${label}」！ ${finalDamage} のダメージ！${guardApplied ? '(受け身で軽減)' : ''}`;
+  addLog(`${attackerLabel}: 出目${dice} → ${resultText}`);
+  b.message = resultText;
   b.awaitingContinue = true;
   render();
 
   await waitForContinueClick();
   b.awaitingContinue = false;
 
-  if (defender.hp <= 0) {
-    state.battleResult = winnerIsPlayer ? 'win' : 'lose';
+  finishRound(defender);
+}
+
+function finishRound(defender) {
+  const b = state.battle;
+  if (defender && defender.hp <= 0) {
+    state.battleResult = defender === state.battleCpu ? 'win' : 'lose';
     state.screen = 'result';
     render();
     return;
   }
 
+  pruneFocusOverrides(state.battlePlayer, b.round + 1);
+  pruneFocusOverrides(state.battleCpu, b.round + 1);
+  refillHand(state.playerDeck);
+  refillHand(state.cpuDeck);
+
   b.round += 1;
-  b.playerHand = null;
-  b.cpuHand = null;
+  b.playerCard = null;
+  b.cpuCard = null;
   b.diceValue = null;
   b.message = '';
   b.arenaColor = null;
@@ -585,6 +767,8 @@ function bindResult() {
     state.cpuCharacter = null;
     state.battlePlayer = null;
     state.battleCpu = null;
+    state.playerDeck = null;
+    state.cpuDeck = null;
     state.battle = null;
     state.battleResult = null;
     render();
