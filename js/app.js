@@ -8,11 +8,14 @@ const state = {
   photoFacingMode: 'user',
   playerCharacter: null,
   cpuCharacter: null,
-  actCardSelection: null,
+  speedCardSelection: null,
+  skillCardSelection: null,
   battlePlayer: null,
   battleCpu: null,
-  playerDeck: null,
-  cpuDeck: null,
+  playerSpeedDeck: null,
+  playerSkillDeck: null,
+  cpuSpeedDeck: null,
+  cpuSkillDeck: null,
   battle: null,
   battleResult: null,
 };
@@ -70,17 +73,29 @@ function render() {
       app.innerHTML = renderCapturePhoto();
       initPhotoCapture();
       break;
+    case 'enterName':
+      app.innerHTML = renderEnterName();
+      bindEnterName();
+      break;
     case 'selectCommandTable':
       app.innerHTML = renderSelectCommandTable();
       bindSelectCommandTable();
       break;
-    case 'selectActCards':
-      app.innerHTML = renderSelectActCards();
-      bindSelectActCards();
+    case 'selectSpeedCards':
+      app.innerHTML = renderSelectSpeedCards();
+      bindSelectSpeedCards();
+      break;
+    case 'selectSkillCards':
+      app.innerHTML = renderSelectSkillCards();
+      bindSelectSkillCards();
       break;
     case 'preview':
       app.innerHTML = renderPreview();
       bindPreview();
+      break;
+    case 'ready':
+      app.innerHTML = renderReady();
+      bindReady();
       break;
     case 'battle':
       app.innerHTML = renderBattle();
@@ -101,10 +116,6 @@ function renderHome() {
       <div class="spacer"></div>
       <div class="title">QRバトル</div>
       <div class="subtitle">QRコードを読み取って自分だけのキャラクターを作り、CPUと対戦しよう。</div>
-      <div class="name-input-row">
-        <label class="section-label" for="playerNameInput">キャラクターの名前(省略可)</label>
-        <input type="text" id="playerNameInput" placeholder="あなた" maxlength="10" value="${escapeHtml(state.playerName || '')}" />
-      </div>
       <div class="spacer"></div>
       <button class="btn block" id="startBtn">QRコードでキャラをつくる</button>
       <div class="spacer"></div>
@@ -113,9 +124,6 @@ function renderHome() {
 }
 
 function bindHome() {
-  document.getElementById('playerNameInput').oninput = (e) => {
-    state.playerName = e.target.value;
-  };
   document.getElementById('startBtn').onclick = () => {
     state.screen = 'scanQr';
     render();
@@ -239,7 +247,7 @@ function initPhotoCapture() {
     state.screen = 'scanQr';
     render();
   };
-  document.getElementById('skipPhoto').onclick = () => finalizePlayerCharacter(null);
+  document.getElementById('skipPhoto').onclick = () => goToNameEntry(null);
   document.getElementById('flipBtn').onclick = () => {
     state.photoFacingMode = state.photoFacingMode === 'user' ? 'environment' : 'user';
     startPhotoStream();
@@ -280,15 +288,58 @@ function capturePhoto() {
   const sy = (video.videoHeight - size) / 2;
   ctx.drawImage(video, sx, sy, size, size, 0, 0, targetSize, targetSize);
   const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-  finalizePlayerCharacter(dataUrl);
+  goToNameEntry(dataUrl);
+}
+
+function goToNameEntry(dataUrl) {
+  stopCamera();
+  state.photoDataUrl = dataUrl;
+  state.screen = 'enterName';
+  render();
+}
+
+// ---------- 名前入力画面 ----------
+
+function renderEnterName() {
+  const avatar = state.photoDataUrl
+    ? `<img class="char-avatar" src="${state.photoDataUrl}" alt="撮影した写真" />`
+    : `<div class="char-avatar">🧑</div>`;
+  return `
+    <div class="screen">
+      <div class="top-bar">
+        <button class="icon-btn" id="backBtn">← もどる</button>
+        <div></div>
+      </div>
+      <div class="title" style="font-size:20px;">名前を決める</div>
+      <div style="display:flex; justify-content:center;">${avatar}</div>
+      <div class="name-input-row">
+        <label class="section-label" for="playerNameInput">キャラクターの名前(省略可)</label>
+        <input type="text" id="playerNameInput" placeholder="あなた" maxlength="10" value="${escapeHtml(state.playerName || '')}" />
+      </div>
+      <div class="spacer"></div>
+      <button class="btn block" id="nameConfirmBtn">つぎへ</button>
+    </div>
+  `;
+}
+
+function bindEnterName() {
+  document.getElementById('backBtn').onclick = () => {
+    state.screen = 'capturePhoto';
+    render();
+  };
+  document.getElementById('playerNameInput').oninput = (e) => {
+    state.playerName = e.target.value;
+  };
+  document.getElementById('nameConfirmBtn').onclick = () => {
+    finalizePlayerCharacter(state.photoDataUrl);
+  };
 }
 
 function finalizePlayerCharacter(dataUrl) {
-  stopCamera();
-  state.photoDataUrl = dataUrl;
   const name = (state.playerName && state.playerName.trim()) || 'あなた';
   state.playerCharacter = generateCharacterFromText(state.qrText, name, dataUrl);
-  state.playerCharacter.actCardPool = generateActCardPool(state.qrText, name);
+  state.playerCharacter.speedCardPool = generateSpeedCardPool(state.qrText, name);
+  state.playerCharacter.skillCardPool = generateSkillCardPool(state.qrText, name);
   state.screen = 'selectCommandTable';
   render();
 }
@@ -321,38 +372,95 @@ function renderSelectCommandTable() {
 
 function bindSelectCommandTable() {
   document.getElementById('backBtn').onclick = () => {
-    state.screen = 'scanQr';
-    state.qrText = null;
-    state.photoDataUrl = null;
-    state.playerCharacter = null;
+    state.screen = 'enterName';
     render();
   };
   document.querySelectorAll('[data-option-index]').forEach((btn) => {
     btn.onclick = () => {
       const idx = Number(btn.dataset.optionIndex);
       state.playerCharacter.commandTable = state.playerCharacter.commandTableOptions[idx];
-      // デフォルトでは完全ランダムのワイルドカードを除いた10枚(QR由来)を選択済みにしておく
-      state.actCardSelection = new Set(
-        state.playerCharacter.actCardPool.filter((c) => !c.isWild).map((c) => c.id)
+      // デフォルトでは完全ランダムのワイルドカードを除いたカード(QR由来)を選択済みにしておく
+      state.speedCardSelection = new Set(
+        state.playerCharacter.speedCardPool.filter((c) => !c.isWild).map((c) => c.id)
       );
-      state.screen = 'selectActCards';
+      state.screen = 'selectSpeedCards';
       render();
     };
   });
 }
 
-// ---------- アクトカード選択画面 ----------
+// ---------- スピードカード選択画面 ----------
 
-function renderSelectActCards() {
-  const pool = state.playerCharacter.actCardPool;
-  const selection = state.actCardSelection;
+function renderSelectSpeedCards() {
+  const pool = state.playerCharacter.speedCardPool;
+  const selection = state.speedCardSelection;
+  const cardsHtml = pool
+    .map((card) => {
+      const isSelected = selection.has(card.id);
+      return `
+        <button class="act-card speed-card ${isSelected ? 'selected' : ''}" data-card-id="${card.id}">
+          ${card.isWild ? '<div class="wild-badge">WILD</div>' : ''}
+          <div class="act-card-speed">SPD ${card.speed}</div>
+        </button>
+      `;
+    })
+    .join('');
+  return `
+    <div class="screen">
+      <div class="top-bar">
+        <button class="icon-btn" id="backBtn">← もどる</button>
+        <div></div>
+      </div>
+      <div class="title" style="font-size:20px;">スピードカードを選ぶ</div>
+      <div class="subtitle">12枚(うちWILDの2枚は完全ランダム)の中から、実際に使う10枚を選んでください</div>
+      <div class="selection-count">選択中: ${selection.size} / 10</div>
+      <div class="act-card-grid select-grid">${cardsHtml}</div>
+      <div class="spacer"></div>
+      <button class="btn block" id="confirmBtn" ${selection.size === 10 ? '' : 'disabled'}>これで決定</button>
+    </div>
+  `;
+}
+
+function bindSelectSpeedCards() {
+  document.getElementById('backBtn').onclick = () => {
+    state.screen = 'selectCommandTable';
+    render();
+  };
+  document.querySelectorAll('.select-grid .act-card').forEach((btn) => {
+    btn.onclick = () => {
+      const id = btn.dataset.cardId;
+      const selection = state.speedCardSelection;
+      if (selection.has(id)) {
+        selection.delete(id);
+      } else {
+        if (selection.size >= 10) return;
+        selection.add(id);
+      }
+      render();
+    };
+  });
+  document.getElementById('confirmBtn').onclick = () => {
+    if (state.speedCardSelection.size !== 10) return;
+    state.playerCharacter.speedCards = state.playerCharacter.speedCardPool.filter((c) => state.speedCardSelection.has(c.id));
+    state.skillCardSelection = new Set(
+      state.playerCharacter.skillCardPool.filter((c) => !c.isWild).map((c) => c.id)
+    );
+    state.screen = 'selectSkillCards';
+    render();
+  };
+}
+
+// ---------- スキルカード選択画面 ----------
+
+function renderSelectSkillCards() {
+  const pool = state.playerCharacter.skillCardPool;
+  const selection = state.skillCardSelection;
   const cardsHtml = pool
     .map((card) => {
       const isSelected = selection.has(card.id);
       return `
         <button class="act-card ${effectClass(card.effectType)} ${isSelected ? 'selected' : ''}" data-card-id="${card.id}">
           ${card.isWild ? '<div class="wild-badge">WILD</div>' : ''}
-          <div class="act-card-speed">SPD ${card.speed}</div>
           <div class="act-card-label">${escapeHtml(card.label)}</div>
         </button>
       `;
@@ -364,38 +472,37 @@ function renderSelectActCards() {
         <button class="icon-btn" id="backBtn">← もどる</button>
         <div></div>
       </div>
-      <div class="title" style="font-size:20px;">使うアクトカードを選ぶ</div>
-      <div class="subtitle">13枚(うちWILDの3枚は完全ランダム)の中から、実際に使う10枚を選んでください</div>
-      <div class="selection-count">選択中: ${selection.size} / 10</div>
+      <div class="title" style="font-size:20px;">スキルカードを選ぶ</div>
+      <div class="subtitle">9枚(うちWILDの3枚は完全ランダム)の中から、実際に使う6枚を選んでください</div>
+      <div class="selection-count">選択中: ${selection.size} / 6</div>
       <div class="act-card-grid select-grid">${cardsHtml}</div>
       <div class="spacer"></div>
-      <button class="btn block" id="confirmCardsBtn" ${selection.size === 10 ? '' : 'disabled'}>これで決定</button>
+      <button class="btn block" id="confirmBtn" ${selection.size === 6 ? '' : 'disabled'}>これで決定</button>
     </div>
   `;
 }
 
-function bindSelectActCards() {
+function bindSelectSkillCards() {
   document.getElementById('backBtn').onclick = () => {
-    state.screen = 'selectCommandTable';
+    state.screen = 'selectSpeedCards';
     render();
   };
   document.querySelectorAll('.select-grid .act-card').forEach((btn) => {
     btn.onclick = () => {
       const id = btn.dataset.cardId;
-      const selection = state.actCardSelection;
+      const selection = state.skillCardSelection;
       if (selection.has(id)) {
         selection.delete(id);
       } else {
-        if (selection.size >= 10) return; // 10枚まで
+        if (selection.size >= 6) return;
         selection.add(id);
       }
       render();
     };
   });
-  const confirmBtn = document.getElementById('confirmCardsBtn');
-  confirmBtn.onclick = () => {
-    if (state.actCardSelection.size !== 10) return;
-    state.playerCharacter.actCards = state.playerCharacter.actCardPool.filter((c) => state.actCardSelection.has(c.id));
+  document.getElementById('confirmBtn').onclick = () => {
+    if (state.skillCardSelection.size !== 6) return;
+    state.playerCharacter.skillCards = state.playerCharacter.skillCardPool.filter((c) => state.skillCardSelection.has(c.id));
     state.screen = 'preview';
     render();
   };
@@ -459,14 +566,14 @@ function renderCommandTable(table, revealed) {
   return `<div class="command-table">${cells}</div>`;
 }
 
-// ---------- アクトカード共通表示 ----------
+// ---------- スピード/スキルカード共通表示 ----------
 
 function effectClass(effectType) {
   switch (effectType) {
-    case EFFECT_TYPES.BUFF: return 'effect-buff';
+    case EFFECT_TYPES.CHARGE: return 'effect-charge';
     case EFFECT_TYPES.GUARD: return 'effect-guard';
-    case EFFECT_TYPES.FOCUS: return 'effect-focus';
-    case EFFECT_TYPES.CHOICE: return 'effect-choice';
+    case EFFECT_TYPES.ACCEL: return 'effect-accel';
+    case EFFECT_TYPES.AGILE: return 'effect-agile';
     default: return '';
   }
 }
@@ -503,17 +610,16 @@ function effectVisualClass(cmd) {
   }
 }
 
-function renderCardFace(card, small) {
-  return `
-    <div class="act-card ${small ? 'small' : ''} ${effectClass(card.effectType)}">
-      <div class="act-card-speed">SPD ${card.speed}</div>
-      <div class="act-card-label">${escapeHtml(card.label)}</div>
-    </div>
-  `;
+function renderSpeedCardFace(card, small) {
+  return `<div class="act-card speed-card ${small ? 'small' : ''}"><div class="act-card-speed">SPD ${card.speed}</div></div>`;
 }
 
-function renderCardBack() {
-  return `<div class="act-card small card-back">？</div>`;
+function renderSkillCardFace(card, small) {
+  return `<div class="act-card ${small ? 'small' : ''} ${effectClass(card.effectType)}"><div class="act-card-label">${escapeHtml(card.label)}</div></div>`;
+}
+
+function renderCardBack(small) {
+  return `<div class="act-card ${small ? 'small' : ''} card-back">？</div>`;
 }
 
 // ---------- キャラ確認画面 ----------
@@ -529,8 +635,10 @@ function renderPreview() {
       ${renderCharacterCard(state.playerCharacter, false)}
       <div class="section-label">コマンド表(サイコロの目 → 行動)</div>
       ${renderCommandTable(state.playerCharacter.commandTable)}
-      <div class="section-label">選んだアクトカード(10枚・バトル開始時に3枚配られます)</div>
-      <div class="act-card-grid">${state.playerCharacter.actCards.map((c) => renderCardFace(c, true)).join('')}</div>
+      <div class="section-label">選んだスピードカード(10枚)</div>
+      <div class="act-card-grid">${state.playerCharacter.speedCards.map((c) => renderSpeedCardFace(c, true)).join('')}</div>
+      <div class="section-label">選んだスキルカード(6枚)</div>
+      <div class="act-card-grid">${state.playerCharacter.skillCards.map((c) => renderSkillCardFace(c, true)).join('')}</div>
       <div class="spacer"></div>
       <button class="btn block" id="battleStartBtn">バトル開始</button>
     </div>
@@ -543,19 +651,55 @@ function bindPreview() {
     state.qrText = null;
     state.photoDataUrl = null;
     state.playerCharacter = null;
-    state.actCardSelection = null;
+    state.speedCardSelection = null;
+    state.skillCardSelection = null;
     render();
   };
   document.getElementById('battleStartBtn').onclick = () => {
     state.cpuCharacter = generateCpuCharacter();
-    state.battlePlayer = { ...state.playerCharacter, focusOverrides: {} };
-    state.battleCpu = { ...state.cpuCharacter, focusOverrides: {} };
-    state.playerDeck = createDeckState(state.playerCharacter.actCards);
-    state.cpuDeck = createDeckState(state.battleCpu.actCards);
+    state.screen = 'ready';
+    render();
+  };
+}
+
+// ---------- 準備(Ready?)画面 ----------
+
+function renderReady() {
+  return `
+    <div class="screen result-screen">
+      <div class="title">Ready?</div>
+      <div class="vs-arena">
+        ${renderVsCharacterCard(state.playerCharacter, false)}
+        <div class="vs-label">VS</div>
+        ${renderVsCharacterCard(state.cpuCharacter, false)}
+      </div>
+      <div class="spacer"></div>
+      <button class="btn secondary block" id="editBtn">← コマンド・カードを変更する</button>
+      <button class="btn block" id="fightStartBtn">たたかう！</button>
+    </div>
+  `;
+}
+
+function bindReady() {
+  document.getElementById('editBtn').onclick = () => {
+    state.screen = 'selectCommandTable';
+    render();
+  };
+  document.getElementById('fightStartBtn').onclick = () => {
+    state.battlePlayer = { ...state.playerCharacter };
+    state.battleCpu = { ...state.cpuCharacter };
+    state.playerSpeedDeck = createDeckState(state.playerCharacter.speedCards);
+    state.playerSkillDeck = createDeckState(state.playerCharacter.skillCards);
+    state.cpuSpeedDeck = createDeckState(state.battleCpu.speedCards);
+    state.cpuSkillDeck = createDeckState(state.battleCpu.skillCards);
     state.battle = {
       log: [`バトル開始！ ${state.battlePlayer.name} VS ${state.battleCpu.name}`],
-      playerCard: null,
-      cpuCard: null,
+      playerSpeedCard: null,
+      cpuSpeedCard: null,
+      playerSkillCard: null,
+      cpuSkillCard: null,
+      selectedSpeedCardId: null,
+      selectedSkillCardId: null,
       diceValue: null,
       message: '',
       round: 1,
@@ -570,8 +714,10 @@ function bindPreview() {
       cpuAtkBonus: 0,
       playerGuardMult: null,
       cpuGuardMult: null,
-      playerChoiceFace: null,
-      cpuChoiceFace: null,
+      playerSpeedDelta: 0,
+      cpuSpeedDelta: 0,
+      playerAccel: false,
+      cpuAccel: false,
       commandEffect: null,
       poisonMessages: [],
       poisonHitSides: [],
@@ -617,28 +763,37 @@ function renderBattleControls(b) {
     return `<button class="btn block" id="continueBtn">▶ タップしてつぎへ</button>`;
   }
   if (!b.busy) {
-    return renderCardHandChoices();
+    return renderRoundCardPicker(b);
   }
   return '<div class="subtitle">勝負中<span class="loading-dot">…</span></div>';
 }
 
+function renderRoundCardStack(speedCard, skillCard) {
+  return `
+    <div class="round-card-stack">
+      ${renderSpeedCardFace(speedCard, true)}
+      ${skillCard ? renderSkillCardFace(skillCard, true) : ''}
+    </div>
+  `;
+}
+
 function renderArenaContent(b) {
   let html = '';
-  if (!b.busy && !b.playerCard) {
-    html += `<div>アクトカードを選んでください</div>`;
+  if (!b.busy && !b.playerSpeedCard) {
+    html += `<div>カードを選んでください</div>`;
   }
-  if (b.playerCard && b.cpuCard) {
+  if (b.playerSpeedCard && b.cpuSpeedCard) {
     html += `
       <div class="hands-row">
-        <div>${renderCardFace(b.playerCard, true)}<div class="hand-label">あなた</div></div>
-        <div>${renderCardFace(b.cpuCard, true)}<div class="hand-label">CPU</div></div>
+        <div>${renderRoundCardStack(b.playerSpeedCard, b.playerSkillCard)}<div class="hand-label">あなた</div></div>
+        <div>${renderRoundCardStack(b.cpuSpeedCard, b.cpuSkillCard)}<div class="hand-label">CPU</div></div>
       </div>
     `;
-  } else if (b.playerCard) {
+  } else if (b.playerSpeedCard) {
     html += `
       <div class="hands-row">
-        <div>${renderCardFace(b.playerCard, true)}<div class="hand-label">あなた</div></div>
-        <div>${renderCardBack()}<div class="hand-label">CPU</div></div>
+        <div>${renderRoundCardStack(b.playerSpeedCard, b.playerSkillCard)}<div class="hand-label">あなた</div></div>
+        <div>${renderCardBack(true)}<div class="hand-label">CPU</div></div>
       </div>
     `;
   }
@@ -657,14 +812,22 @@ function renderArenaContent(b) {
   return html;
 }
 
-function renderCardHandChoices() {
-  const hand = state.playerDeck.hand;
-  const cards = hand
-    .map((card) => `<button class="act-card ${effectClass(card.effectType)}" data-card-id="${card.id}"><div class="act-card-speed">SPD ${card.speed}</div><div class="act-card-label">${escapeHtml(card.label)}</div></button>`)
+function renderRoundCardPicker(b) {
+  const speedHand = state.playerSpeedDeck.hand;
+  const skillHand = state.playerSkillDeck.hand;
+  const speedHtml = speedHand
+    .map((card) => `<button class="act-card speed-card ${b.selectedSpeedCardId === card.id ? 'selected' : ''}" data-speed-card-id="${card.id}"><div class="act-card-speed">SPD ${card.speed}</div></button>`)
+    .join('');
+  const skillHtml = skillHand
+    .map((card) => `<button class="act-card ${effectClass(card.effectType)} ${b.selectedSkillCardId === card.id ? 'selected' : ''}" data-skill-card-id="${card.id}"><div class="act-card-label">${escapeHtml(card.label)}</div></button>`)
     .join('');
   return `
-    <div class="card-hand-row">${cards}</div>
-    <div class="deck-count">山札 ${state.playerDeck.deck.length} ・ 捨て札 ${state.playerDeck.discard.length}</div>
+    <div class="section-label">スピードカード(1枚必須)</div>
+    <div class="card-hand-row speed-pick">${speedHtml}</div>
+    <div class="section-label">スキルカード(任意・タップで選択/解除)</div>
+    <div class="card-hand-row skill-pick">${skillHtml}</div>
+    <div class="deck-count">スピード 山札${state.playerSpeedDeck.deck.length}・捨て札${state.playerSpeedDeck.discard.length} ｜ スキル 山札${state.playerSkillDeck.deck.length}・捨て札${state.playerSkillDeck.discard.length}</div>
+    <button class="btn block" id="playCardsBtn" ${b.selectedSpeedCardId ? '' : 'disabled'}>カードを出す</button>
   `;
 }
 
@@ -673,12 +836,28 @@ function renderLog(log) {
 }
 
 function initBattle() {
-  document.querySelectorAll('.card-hand-row .act-card').forEach((btn) => {
+  document.querySelectorAll('.speed-pick .act-card').forEach((btn) => {
     btn.onclick = () => {
       if (state.battle.busy) return;
-      onPlayerPlayCard(btn.dataset.cardId);
+      state.battle.selectedSpeedCardId = btn.dataset.speedCardId;
+      render();
     };
   });
+  document.querySelectorAll('.skill-pick .act-card').forEach((btn) => {
+    btn.onclick = () => {
+      if (state.battle.busy) return;
+      const id = btn.dataset.skillCardId;
+      state.battle.selectedSkillCardId = state.battle.selectedSkillCardId === id ? null : id;
+      render();
+    };
+  });
+  const playCardsBtn = document.getElementById('playCardsBtn');
+  if (playCardsBtn) {
+    playCardsBtn.onclick = () => {
+      if (!state.battle.selectedSpeedCardId) return;
+      onPlayerPlayCards();
+    };
+  }
   const continueBtn = document.getElementById('continueBtn');
   if (continueBtn) continueBtn.onclick = onContinueClick;
   const rollDiceBtn = document.getElementById('rollDiceBtn');
@@ -718,74 +897,84 @@ function onContinueClick() {
   }
 }
 
-// カードの追加効果を発動する(出した瞬間に発動。「受け身」は条件成立時のみ実際に効く)
-function applyCardEffect(card, side) {
+// スキルカードの効果を発動する(出した瞬間に発動。「受け身」は条件成立時のみ実際に効く)
+function applySkillCardEffect(skillCard, side) {
+  if (!skillCard) return;
   const b = state.battle;
   const character = side === 'player' ? state.battlePlayer : state.battleCpu;
   const label = side === 'player' ? 'あなた' : 'CPU';
-  switch (card.effectType) {
-    case EFFECT_TYPES.BUFF: {
-      if (side === 'player') b.playerAtkBonus = card.n;
-      else b.cpuAtkBonus = card.n;
-      addLog(`${label}: 「${card.label}」発動！ このラウンドの攻撃力+${card.n}`);
+  switch (skillCard.effectType) {
+    case EFFECT_TYPES.CHARGE: {
+      const speedDelta = -skillCard.n / 2;
+      if (side === 'player') {
+        b.playerAtkBonus = skillCard.n;
+        b.playerSpeedDelta = speedDelta;
+      } else {
+        b.cpuAtkBonus = skillCard.n;
+        b.cpuSpeedDelta = speedDelta;
+      }
+      addLog(`${label}: 「${skillCard.label}」発動！ 攻撃力+${skillCard.n}、スピード${speedDelta}`);
       break;
     }
     case EFFECT_TYPES.GUARD: {
-      const mult = card.n;
+      const mult = skillCard.n;
       if (side === 'player') b.playerGuardMult = mult;
       else b.cpuGuardMult = mult;
-      addLog(`${label}: 「${card.label}」発動！ 攻撃できなかった場合ダメージ${Math.round(mult * 100)}%に軽減`);
+      addLog(`${label}: 「${skillCard.label}」発動！ 攻撃できなかった場合ダメージ${Math.round(mult * 100)}%に軽減`);
       break;
     }
-    case EFFECT_TYPES.FOCUS: {
-      character.focusOverrides[card.n - 1] = b.round + 1;
-      addLog(`${label}: 「${card.label}」発動！ 出目${card.n}が次のラウンド終了時までクリティカルに変化`);
+    case EFFECT_TYPES.ACCEL: {
+      character.permanentSpeedBonus = (character.permanentSpeedBonus || 0) + 1;
+      if (side === 'player') b.playerAccel = true;
+      else b.cpuAccel = true;
+      addLog(`${label}: 「アクセル」発動！ このラウンドのスピードは0。次のラウンド以降スピード+1(永続)`);
       break;
     }
-    case EFFECT_TYPES.CHOICE: {
-      if (side === 'player') b.playerChoiceFace = card.n;
-      else b.cpuChoiceFace = card.n;
-      addLog(`${label}: 「${card.label}」発動！ 攻撃時はサイコロを振らず出目${card.n}を使用`);
+    case EFFECT_TYPES.AGILE: {
+      if (side === 'player') {
+        b.playerSpeedDelta = skillCard.n;
+        b.playerAtkBonus = -skillCard.n * 2;
+      } else {
+        b.cpuSpeedDelta = skillCard.n;
+        b.cpuAtkBonus = -skillCard.n * 2;
+      }
+      addLog(`${label}: 「${skillCard.label}」発動！ スピード+${skillCard.n}、攻撃力-${skillCard.n * 2}`);
       break;
     }
   }
 }
 
-// 「集中」で書き換えられた面をクリティカル扱いにしたコマンド表を返す
-function getEffectiveCommandTable(character) {
-  return character.commandTable.map((cmd, i) => (
-    character.focusOverrides[i] !== undefined ? COMMAND_TYPES.CRITICAL : cmd
-  ));
-}
-
-// 期限切れの「集中」効果を取り除く(upcomingRound はこれから始まるラウンド番号)
-function pruneFocusOverrides(character, upcomingRound) {
-  Object.keys(character.focusOverrides).forEach((faceIndex) => {
-    if (upcomingRound > character.focusOverrides[faceIndex]) {
-      delete character.focusOverrides[faceIndex];
-    }
-  });
-}
-
-async function onPlayerPlayCard(cardId) {
+async function onPlayerPlayCards() {
   const b = state.battle;
   b.busy = true;
   b.commandEffect = null;
   b.poisonMessages = [];
   b.poisonHitSides = [];
 
-  const playerCard = playCard(state.playerDeck, cardId);
-  b.playerCard = playerCard;
-  b.cpuCard = null;
+  const playerSpeedCard = playCard(state.playerSpeedDeck, b.selectedSpeedCardId);
+  const playerSkillCard = b.selectedSkillCardId ? playCard(state.playerSkillDeck, b.selectedSkillCardId) : null;
+  b.selectedSpeedCardId = null;
+  b.selectedSkillCardId = null;
+
+  b.playerSpeedCard = playerSpeedCard;
+  b.playerSkillCard = playerSkillCard;
+  b.cpuSpeedCard = null;
+  b.cpuSkillCard = null;
   b.diceValue = null;
   b.message = '';
   b.arenaColor = null;
   render();
 
   await wait(400);
-  const cpuHandCard = pickCpuCard(state.cpuDeck);
-  const cpuCard = playCard(state.cpuDeck, cpuHandCard.id);
-  b.cpuCard = cpuCard;
+  const cpuSpeedHandCard = pickCpuCard(state.cpuSpeedDeck);
+  const cpuSpeedCard = playCard(state.cpuSpeedDeck, cpuSpeedHandCard.id);
+  let cpuSkillCard = null;
+  if (state.cpuSkillDeck.hand.length > 0 && Math.random() < 0.6) {
+    const cpuSkillPick = pickCpuCard(state.cpuSkillDeck);
+    cpuSkillCard = playCard(state.cpuSkillDeck, cpuSkillPick.id);
+  }
+  b.cpuSpeedCard = cpuSpeedCard;
+  b.cpuSkillCard = cpuSkillCard;
   render();
 
   await wait(500);
@@ -794,24 +983,37 @@ async function onPlayerPlayCard(cardId) {
   b.cpuAtkBonus = 0;
   b.playerGuardMult = null;
   b.cpuGuardMult = null;
-  b.playerChoiceFace = null;
-  b.cpuChoiceFace = null;
-  applyCardEffect(playerCard, 'player');
-  applyCardEffect(cpuCard, 'cpu');
-  b.message = 'アクトカードの効果が発動！';
-  render();
-  await wait(800);
+  b.playerSpeedDelta = 0;
+  b.cpuSpeedDelta = 0;
+  b.playerAccel = false;
+  b.cpuAccel = false;
 
-  if (playerCard.speed === cpuCard.speed) {
-    addLog(`スピード${playerCard.speed}で同速！ このラウンドはどちらも攻撃できない`);
-    b.message = `同速(${playerCard.speed})…このラウンドは攻撃なし`;
+  applySkillCardEffect(playerSkillCard, 'player');
+  applySkillCardEffect(cpuSkillCard, 'cpu');
+
+  if (playerSkillCard || cpuSkillCard) {
+    b.message = 'スキルカードの効果が発動！';
+    render();
+    await wait(800);
+  }
+
+  const playerEffSpeed = b.playerAccel
+    ? 0
+    : playerSpeedCard.speed + (state.battlePlayer.permanentSpeedBonus || 0) + b.playerSpeedDelta;
+  const cpuEffSpeed = b.cpuAccel
+    ? 0
+    : cpuSpeedCard.speed + (state.battleCpu.permanentSpeedBonus || 0) + b.cpuSpeedDelta;
+
+  if (playerEffSpeed === cpuEffSpeed) {
+    addLog(`スピード${playerEffSpeed}で同速！ このラウンドはどちらも攻撃できない`);
+    b.message = `同速(${playerEffSpeed})…このラウンドは攻撃なし`;
     await resolveRoundEnd(null);
     return;
   }
 
-  const winnerIsPlayer = playerCard.speed > cpuCard.speed;
+  const winnerIsPlayer = playerEffSpeed > cpuEffSpeed;
   b.arenaColor = winnerIsPlayer ? '#239dda' : '#e60012';
-  addLog(`スピード勝負: ${winnerIsPlayer ? 'あなた' : 'CPU'}の勝ち！ (${playerCard.speed} vs ${cpuCard.speed})`);
+  addLog(`スピード勝負: ${winnerIsPlayer ? 'あなた' : 'CPU'}の勝ち！ (${playerEffSpeed} vs ${cpuEffSpeed})`);
   b.message = winnerIsPlayer ? 'スピード勝ち！ あなたの攻撃！' : 'スピード負け… CPUの攻撃！';
   render();
   await wait(700);
@@ -819,41 +1021,26 @@ async function onPlayerPlayCard(cardId) {
   const attacker = winnerIsPlayer ? state.battlePlayer : state.battleCpu;
   const defender = winnerIsPlayer ? state.battleCpu : state.battlePlayer;
   const attackerLabel = winnerIsPlayer ? 'あなた' : 'CPU';
-  const choiceFace = winnerIsPlayer ? b.playerChoiceFace : b.cpuChoiceFace;
-  const effectiveTable = getEffectiveCommandTable(attacker);
 
   let dice;
-  if (choiceFace) {
-    dice = choiceFace;
-    b.diceValue = dice;
-    b.message = `${attackerLabel}は「チョイス${choiceFace}」で出目${choiceFace}を使用！`;
-    render();
-    await wait(600);
-  } else if (winnerIsPlayer) {
+  if (winnerIsPlayer) {
     b.message = 'あなたの番です';
     b.awaitingDiceRoll = true;
     render();
     await waitForContinueClick();
     b.awaitingDiceRoll = false;
-
-    dice = rollDice();
-    b.diceValue = dice;
-    b.message = `${attackerLabel}がサイコロを振った…`;
-    render();
-    await wait(600);
-  } else {
-    dice = rollDice();
-    b.diceValue = dice;
-    b.message = `${attackerLabel}がサイコロを振った…`;
-    render();
-    await wait(600);
   }
+  dice = rollDice();
+  b.diceValue = dice;
+  b.message = `${attackerLabel}がサイコロを振った…`;
+  render();
+  await wait(600);
 
   if (!winnerIsPlayer) {
     b.cpuRevealed.add(dice - 1);
   }
 
-  const command = effectiveTable[dice - 1];
+  const command = attacker.commandTable[dice - 1];
   const atkBonus = winnerIsPlayer ? b.playerAtkBonus : b.cpuAtkBonus;
   const result = resolveCommand(command, attacker, defender, atkBonus);
   b.commandEffect = { type: command, label: result.label };
@@ -965,14 +1152,16 @@ async function resolveRoundEnd(combatDefender) {
 
 function advanceToNextRound() {
   const b = state.battle;
-  pruneFocusOverrides(state.battlePlayer, b.round + 1);
-  pruneFocusOverrides(state.battleCpu, b.round + 1);
-  refillHand(state.playerDeck);
-  refillHand(state.cpuDeck);
+  refillHand(state.playerSpeedDeck);
+  refillHand(state.playerSkillDeck);
+  refillHand(state.cpuSpeedDeck);
+  refillHand(state.cpuSkillDeck);
 
   b.round += 1;
-  b.playerCard = null;
-  b.cpuCard = null;
+  b.playerSpeedCard = null;
+  b.cpuSpeedCard = null;
+  b.playerSkillCard = null;
+  b.cpuSkillCard = null;
   b.diceValue = null;
   b.message = '';
   b.arenaColor = null;
@@ -1004,11 +1193,14 @@ function bindResult() {
     state.photoDataUrl = null;
     state.playerCharacter = null;
     state.cpuCharacter = null;
-    state.actCardSelection = null;
+    state.speedCardSelection = null;
+    state.skillCardSelection = null;
     state.battlePlayer = null;
     state.battleCpu = null;
-    state.playerDeck = null;
-    state.cpuDeck = null;
+    state.playerSpeedDeck = null;
+    state.playerSkillDeck = null;
+    state.cpuSpeedDeck = null;
+    state.cpuSkillDeck = null;
     state.battle = null;
     state.battleResult = null;
     render();

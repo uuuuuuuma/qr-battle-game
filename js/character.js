@@ -10,9 +10,9 @@
 // 3. サイコロの目(1〜6)それぞれにコマンドを割り当てたコマンド表を3パターン作り、
 //    プレイヤーはその中から使用する1つを選ぶ。「クリティカル」「コンボ」「ポイズン」は
 //    「Sコマンド」と呼び、各コマンド表に必ず1つ以上入るようにする
-// 4. キャラクター生成後、同じQR文字列から10枚のアクトカード(候補)を生成し、
-//    さらに完全ランダム(QRに依存しない)なカードを3枚追加した計13枚から、
-//    プレイヤーが実際に使う10枚を選ぶ
+// 4. キャラクター生成後、同じQR文字列から「スピードカード」10枚・「スキルカード」6枚を生成し、
+//    さらに完全ランダム(QRに依存しない)なスピードカード2枚・スキルカード3枚を追加した中から、
+//    プレイヤーが実際に使うスピードカード10枚・スキルカード6枚を選ぶ
 
 const COMMAND_TYPES = {
   ATTACK: 'こうげき',
@@ -32,11 +32,12 @@ function isSCommand(cmd) {
   return S_COMMANDS.includes(cmd);
 }
 
+// スキルカードの効果種別
 const EFFECT_TYPES = {
-  BUFF: 'バフ',
+  CHARGE: 'チャージ',
   GUARD: '受け身',
-  FOCUS: '集中',
-  CHOICE: 'チョイス',
+  ACCEL: 'アクセル',
+  AGILE: '身軽',
 };
 
 function clamp(v, min, max) {
@@ -103,10 +104,12 @@ function generateCharacterFromText(text, name, imageDataUrl) {
     atk,
     commandTableOptions,
     commandTable: null, // 3択の中から選んだらセットされる
-    actCardPool: [], // 13枚の候補(生成直後に入る)
-    actCards: [], // 13枚のうちプレイヤーが選んだ10枚
-    focusOverrides: {},
+    speedCardPool: [], // 12枚の候補(生成直後に入る)
+    speedCards: [], // 12枚のうちプレイヤーが選んだ10枚
+    skillCardPool: [], // 9枚の候補(生成直後に入る)
+    skillCards: [], // 9枚のうちプレイヤーが選んだ6枚
     comboMultiplier: 1, // 「コンボ」を使うたびに+0.3され、ゲーム終了まで持続する
+    permanentSpeedBonus: 0, // 「アクセル」を使うたびに+1され、ゲーム終了まで持続する
     poisoned: false,
     image: imageDataUrl || null,
     sourceText: text,
@@ -117,19 +120,21 @@ function generateCpuCharacter() {
   const seedText = 'CPU-' + Date.now() + '-' + Math.floor(Math.random() * 1000000);
   const cpu = generateCharacterFromText(seedText, 'CPU', null);
   cpu.commandTable = cpu.commandTableOptions[Math.floor(Math.random() * cpu.commandTableOptions.length)];
-  cpu.actCardPool = generateActCardPool(seedText, 'CPU');
-  cpu.actCards = shuffleArray(cpu.actCardPool).slice(0, 10); // CPUはランダムに10枚選ぶ
+  cpu.speedCardPool = generateSpeedCardPool(seedText, 'CPU');
+  cpu.speedCards = shuffleArray(cpu.speedCardPool).slice(0, 10); // CPUはランダムに10枚選ぶ
+  cpu.skillCardPool = generateSkillCardPool(seedText, 'CPU');
+  cpu.skillCards = shuffleArray(cpu.skillCardPool).slice(0, 6); // CPUはランダムに6枚選ぶ
   return cpu;
 }
 
-// ---------- アクトカード生成 ----------
-// スピード(1〜10)と追加効果を持つカードを10枚生成する(QR由来の疑似乱数)。
+// ---------- スピードカード生成 ----------
+// スピード(1〜10)のみを持つカードを10枚生成する(QR由来の疑似乱数)。
 // 少なくとも3枚はスピード7〜10になるようにする。
-// さらに、10枚とは別に完全ランダム(QRに依存しないMath.random)なカードを3枚作る。
-// 合計13枚の中から、実際にゲームで使う10枚をプレイヤーが選ぶ。
+// さらに、完全ランダム(QRに依存しないMath.random)なスピードカードを2枚作る。
+// 合計12枚の中から、実際にゲームで使う10枚をプレイヤーが選ぶ。
 
-function generateActCardPool(text, name) {
-  const rand = createSeededRandom(text + '::cards::' + name);
+function generateSpeedCardPool(text, name) {
+  const rand = createSeededRandom(text + '::speed::' + name);
 
   const speeds = [];
   for (let i = 0; i < 10; i++) {
@@ -143,90 +148,84 @@ function generateActCardPool(text, name) {
     }
   }
 
-  const effectPool = [EFFECT_TYPES.BUFF, EFFECT_TYPES.GUARD, EFFECT_TYPES.FOCUS, EFFECT_TYPES.CHOICE];
+  const baseCards = speeds.map((speed, i) => ({
+    id: `${name}-speed-${i}-${speed}`,
+    speed,
+    isWild: false,
+  }));
 
-  const baseCards = speeds.map((speed, i) => {
+  const wildCards = [0, 1].map((i) => {
+    const speed = 1 + Math.floor(Math.random() * 10);
+    return { id: `${name}-speed-wild-${i}-${speed}`, speed, isWild: true };
+  });
+
+  return baseCards.concat(wildCards); // 合計12枚
+}
+
+// ---------- スキルカード生成 ----------
+// 追加効果(チャージ/受け身/アクセル/身軽)を持つカードを6枚生成する(QR由来の疑似乱数)。
+// さらに、完全ランダムなスキルカードを3枚作る。
+// 合計9枚の中から、実際にゲームで使う6枚をプレイヤーが選ぶ。
+
+function generateSkillCardPool(text, name) {
+  const rand = createSeededRandom(text + '::skill::' + name);
+  const effectPool = [EFFECT_TYPES.CHARGE, EFFECT_TYPES.GUARD, EFFECT_TYPES.ACCEL, EFFECT_TYPES.AGILE];
+
+  const baseCards = [];
+  for (let i = 0; i < 6; i++) {
     const effectType = effectPool[Math.floor(rand() * effectPool.length)];
-    const n = rollEffectN(rand, speed, effectType);
-    return {
-      id: `${name}-card-${i}-${speed}-${effectType}-${n}`,
-      speed,
+    const n = rollSkillN(rand, effectType);
+    baseCards.push({
+      id: `${name}-skill-${i}-${effectType}-${n}`,
       effectType,
       n,
-      label: formatEffectLabel(effectType, n),
+      label: formatSkillLabel(effectType, n),
       isWild: false,
+    });
+  }
+
+  const wildCards = [0, 1, 2].map((i) => {
+    const effectType = effectPool[Math.floor(Math.random() * effectPool.length)];
+    const n = rollSkillN(Math.random, effectType);
+    return {
+      id: `${name}-skill-wild-${i}-${effectType}-${n}`,
+      effectType,
+      n,
+      label: formatSkillLabel(effectType, n),
+      isWild: true,
     };
   });
 
-  // 10枚とは別に、完全ランダムなカードを3枚作る
-  const wildCards = [0, 1, 2].map((i) => generateRandomActCard(name, i));
-
-  return baseCards.concat(wildCards); // 合計13枚
+  return baseCards.concat(wildCards); // 合計9枚
 }
 
-// スピードに関係なく完全ランダムに効果値を決める(Math.random。QRに依存しない)
-function generateRandomActCard(name, wildIndex) {
-  const speed = 1 + Math.floor(Math.random() * 10);
-  const effectPool = [EFFECT_TYPES.BUFF, EFFECT_TYPES.GUARD, EFFECT_TYPES.FOCUS, EFFECT_TYPES.CHOICE];
-  const effectType = effectPool[Math.floor(Math.random() * effectPool.length)];
-  const n = rollRandomEffectN(effectType);
-  return {
-    id: `${name}-wild-${wildIndex}-${speed}-${effectType}-${n}`,
-    speed,
-    effectType,
-    n,
-    label: formatEffectLabel(effectType, n),
-    isWild: true,
-  };
-}
-
-function rollRandomEffectN(effectType) {
+// randFn は 0以上1未満を返す関数(QR由来のrand、またはMath.random)
+function rollSkillN(randFn, effectType) {
   switch (effectType) {
-    case EFFECT_TYPES.BUFF:
-      return 5 + Math.floor(Math.random() * 6); // 5-10
-    case EFFECT_TYPES.GUARD:
-      return (1 + Math.floor(Math.random() * 8)) / 10; // 0.1-0.8
-    case EFFECT_TYPES.FOCUS:
-      return 1 + Math.floor(Math.random() * 6);
-    case EFFECT_TYPES.CHOICE:
-      return 1 + Math.floor(Math.random() * 6);
-    default:
-      return 0;
-  }
-}
-
-// スピードが低いカードほど「バフ」は強く、「受け身」は硬くなる(遅さを補うため)
-function rollEffectN(rand, speed, effectType) {
-  const slowness = (10 - speed) / 9; // 0(最速) 〜 1(最遅)
-  switch (effectType) {
-    case EFFECT_TYPES.BUFF: {
-      const base = 5 + slowness * 5; // 5〜10、遅いほど大きい
-      return clamp(Math.round(base + (rand() - 0.5) * 2), 5, 10);
-    }
+    case EFFECT_TYPES.CHARGE:
+      return 2 + Math.floor(randFn() * 9); // 2-10
     case EFFECT_TYPES.GUARD: {
-      const stepBase = 1 + (1 - slowness) * 7; // 1〜8相当、遅いほど小さい(=ダメージ倍率が低く防御が固い)
-      const step = clamp(Math.round(stepBase + (rand() - 0.5) * 2), 1, 8);
-      return step / 10; // 0.1〜0.8倍
+      const step = 2 + Math.floor(randFn() * 4); // 2,3,4,5
+      return step / 10; // 0.2〜0.5倍
     }
-    case EFFECT_TYPES.FOCUS:
-      return 1 + Math.floor(rand() * 6); // 出目1〜6
-    case EFFECT_TYPES.CHOICE:
-      return 1 + Math.floor(rand() * 6); // 出目1〜6
+    case EFFECT_TYPES.AGILE:
+      return 1 + Math.floor(randFn() * 3); // 1-3
+    case EFFECT_TYPES.ACCEL:
     default:
-      return 0;
+      return null; // アクセルは固定効果でnを使わない
   }
 }
 
-function formatEffectLabel(effectType, n) {
+function formatSkillLabel(effectType, n) {
   switch (effectType) {
-    case EFFECT_TYPES.BUFF:
-      return `バフ+${n}`;
+    case EFFECT_TYPES.CHARGE:
+      return `チャージ+${n}`;
     case EFFECT_TYPES.GUARD:
       return `受け身${n}倍`;
-    case EFFECT_TYPES.FOCUS:
-      return `集中${n}`;
-    case EFFECT_TYPES.CHOICE:
-      return `チョイス${n}`;
+    case EFFECT_TYPES.ACCEL:
+      return 'アクセル';
+    case EFFECT_TYPES.AGILE:
+      return `身軽+${n}`;
     default:
       return '';
   }

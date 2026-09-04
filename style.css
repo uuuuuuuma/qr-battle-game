@@ -510,14 +510,30 @@ body {
   cursor: default;
 }
 
-.act-card.effect-buff { border-color: #ff9f40; }
-.act-card.effect-buff .act-card-label { color: #ff9f40; }
+.act-card.effect-charge { border-color: #ff9f40; }
+.act-card.effect-charge .act-card-label { color: #ff9f40; }
 .act-card.effect-guard { border-color: #4dd4a3; }
 .act-card.effect-guard .act-card-label { color: #4dd4a3; }
-.act-card.effect-focus { border-color: #c792ff; }
-.act-card.effect-focus .act-card-label { color: #c792ff; }
-.act-card.effect-choice { border-color: #6c8cff; }
-.act-card.effect-choice .act-card-label { color: #6c8cff; }
+.act-card.effect-accel { border-color: #ffd166; }
+.act-card.effect-accel .act-card-label { color: #ffd166; }
+.act-card.effect-agile { border-color: #6c8cff; }
+.act-card.effect-agile .act-card-label { color: #6c8cff; }
+
+.act-card.speed-card {
+  border-color: #4a5a8a;
+}
+.act-card.speed-card .act-card-speed {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.round-card-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
 
 .card-hand-row {
   display: flex;
