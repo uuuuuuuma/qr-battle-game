@@ -334,7 +334,7 @@ function renderCharacterCard(char, compact) {
     <div class="char-card ${compact ? 'compact' : ''}">
       ${avatar}
       <div class="char-info">
-        <div class="char-name">${escapeHtml(char.name)}</div>
+        <div class="char-name">${escapeHtml(char.name)}${char.poisoned ? ' <span class="status-badge poison">🧪毒</span>' : ''}</div>
         <div class="stat-row"><span>HP ${char.hp}/${char.maxHp}</span><span>攻撃力 ${char.atk}</span></div>
         <div class="hp-bar-track"><div class="hp-bar-fill ${hpPct <= 30 ? 'low' : ''}" style="width:${hpPct}%"></div></div>
       </div>
@@ -353,7 +353,12 @@ function renderCommandTable(table, revealed) {
       if (cmd === COMMAND_TYPES.ATTACK) cls = 'attack';
       else if (cmd === COMMAND_TYPES.CRITICAL) cls = 'critical';
       else if (cmd === COMMAND_TYPES.GUARD_STRIKE) cls = 'guard';
-      return `<div class="command-cell ${cls}"><div class="face">出目 ${i + 1}</div><div class="cmd">${cmd}</div></div>`;
+      else if (cmd === COMMAND_TYPES.COMBO) cls = 'combo';
+      else if (cmd === COMMAND_TYPES.HEAL) cls = 'heal';
+      else if (cmd === COMMAND_TYPES.POISON) cls = 'poison';
+      else if (cmd === COMMAND_TYPES.COLLAPSE) cls = 'collapse';
+      const sCls = isSCommand(cmd) ? ' s-command' : '';
+      return `<div class="command-cell ${cls}${sCls}"><div class="face">出目 ${i + 1}</div><div class="cmd">${cmd}</div></div>`;
     })
     .join('');
   return `<div class="command-table">${cells}</div>`;
@@ -589,7 +594,7 @@ function applyCardEffect(card, side) {
       break;
     }
     case EFFECT_TYPES.GUARD: {
-      const mult = card.n * 0.1;
+      const mult = card.n;
       if (side === 'player') b.playerGuardMult = mult;
       else b.cpuGuardMult = mult;
       addLog(`${label}: 「${card.label}」発動！ 攻撃できなかった場合ダメージ${Math.round(mult * 100)}%に軽減`);
@@ -714,19 +719,46 @@ async function onPlayerPlayCard(cardId) {
 
   const command = effectiveTable[dice - 1];
   const atkBonus = winnerIsPlayer ? b.playerAtkBonus : b.cpuAtkBonus;
-  const { damage: baseDamage, label } = resolveCommand(command, attacker.atk + atkBonus);
-  const defenderGuardMult = winnerIsPlayer ? b.cpuGuardMult : b.playerGuardMult;
-  let finalDamage = baseDamage;
-  let guardApplied = false;
-  if (defenderGuardMult !== null) {
-    finalDamage = Math.round(baseDamage * defenderGuardMult);
-    guardApplied = true;
-  }
-  defender.hp = Math.max(0, defender.hp - finalDamage);
+  const result = resolveCommand(command, attacker, defender, atkBonus);
 
-  const resultText = command === COMMAND_TYPES.MISS
-    ? '「ミス」…このラウンドは何も起こらなかった'
-    : `「${label}」！ ${finalDamage} のダメージ！${guardApplied ? '(受け身で軽減)' : ''}`;
+  let resultText;
+  let hitDefender = false;
+
+  if (result.targetsSelf) {
+    // ヒール: 自分の体力を回復する(相手にダメージは無い)
+    const before = attacker.hp;
+    attacker.hp = Math.min(attacker.maxHp, attacker.hp + result.heal);
+    const healed = attacker.hp - before;
+    resultText = `「${result.label}」！ HPを${healed}回復！`;
+  } else if (command === COMMAND_TYPES.MISS) {
+    resultText = '「ミス」…このラウンドは何も起こらなかった';
+  } else {
+    hitDefender = true;
+    const defenderGuardMult = winnerIsPlayer ? b.cpuGuardMult : b.playerGuardMult;
+    let finalDamage = result.damage;
+    let guardApplied = false;
+    if (defenderGuardMult !== null) {
+      finalDamage = Math.round(finalDamage * defenderGuardMult);
+      guardApplied = true;
+    }
+    defender.hp = Math.max(0, defender.hp - finalDamage);
+    resultText = `「${result.label}」！ ${finalDamage} のダメージ！${guardApplied ? '(受け身で軽減)' : ''}`;
+
+    if (command === COMMAND_TYPES.COMBO) {
+      resultText += ` (コンボ倍率${result.comboMultBefore.toFixed(1)}倍→次回${attacker.comboMultiplier.toFixed(1)}倍)`;
+    }
+
+    if (command === COMMAND_TYPES.POISON && result.poison && defender.hp > 0) {
+      defender.poisoned = true;
+      resultText += ' 相手は毒状態になった！';
+    }
+
+    if (command === COMMAND_TYPES.COLLAPSE && defender.hp > 0 && defender.hp <= defender.maxHp * 0.2) {
+      defender.hp = 0;
+      resultText += ' 相手はとどめを刺された！';
+    }
+  }
+
   addLog(`${attackerLabel}: 出目${dice} → ${resultText}`);
   b.message = resultText;
   b.awaitingContinue = true;
@@ -735,15 +767,39 @@ async function onPlayerPlayCard(cardId) {
   await waitForContinueClick();
   b.awaitingContinue = false;
 
-  finishRound(defender);
+  finishRound(hitDefender ? defender : null);
+}
+
+// 毒状態のキャラクターに、残りHPの10%のダメージを与える(ラウンド終了時)
+function applyPoisonTick(character, label) {
+  if (!character.poisoned || character.hp <= 0) return;
+  const dmg = Math.round(character.hp * 0.1);
+  if (dmg <= 0) return;
+  character.hp = Math.max(0, character.hp - dmg);
+  addLog(`${label}は毒のダメージ！ ${dmg}のダメージ`);
+}
+
+function endBattle(result) {
+  state.battleResult = result;
+  state.screen = 'result';
+  render();
 }
 
 function finishRound(defender) {
   const b = state.battle;
   if (defender && defender.hp <= 0) {
-    state.battleResult = defender === state.battleCpu ? 'win' : 'lose';
-    state.screen = 'result';
-    render();
+    endBattle(defender === state.battleCpu ? 'win' : 'lose');
+    return;
+  }
+
+  applyPoisonTick(state.battlePlayer, 'あなた');
+  if (state.battlePlayer.hp <= 0) {
+    endBattle('lose');
+    return;
+  }
+  applyPoisonTick(state.battleCpu, 'CPU');
+  if (state.battleCpu.hp <= 0) {
+    endBattle('win');
     return;
   }
 

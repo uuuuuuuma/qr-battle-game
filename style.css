@@ -319,8 +319,30 @@ body {
 .command-cell.miss .cmd { color: var(--miss); }
 .command-cell.critical .cmd { color: #ffcf4d; }
 .command-cell.guard .cmd { color: #ff9f6b; }
+.command-cell.combo .cmd { color: #ff7bd1; }
+.command-cell.heal .cmd { color: #4dd4a3; }
+.command-cell.poison .cmd { color: #8a5cf6; }
+.command-cell.collapse .cmd { color: #ff5252; }
 .command-cell.hidden .cmd { color: var(--text-dim); }
 .command-cell.hidden { opacity: 0.6; }
+
+.command-cell.s-command {
+  border-color: #ffd166;
+  box-shadow: 0 0 0 1px rgba(255, 209, 102, 0.35) inset;
+}
+
+.status-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  vertical-align: middle;
+}
+
+.status-badge.poison {
+  background: rgba(138, 92, 246, 0.18);
+  color: #b79bff;
+}
 
 .table-toggle-row {
   display: flex;

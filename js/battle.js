@@ -4,37 +4,44 @@ function rollDice() {
   return 1 + Math.floor(Math.random() * 6);
 }
 
-// コマンド実行結果 { damage, label } を返す (label はダメージ表示に使う技名)
-function resolveCommand(command, atk) {
+// コマンドを実行する。attacker/defender は battlePlayer/battleCpu のキャラクターオブジェクトそのもの。
+// COMBO はキャラクターの comboMultiplier を直接書き換える(永続・重ねがけ可能)。
+// 戻り値: { targetsSelf, damage, heal, label, poison, collapseCheck, comboMultBefore }
+function resolveCommand(command, attacker, defender, atkBonus) {
+  const effAtk = attacker.atk + (atkBonus || 0);
   switch (command) {
-    case COMMAND_TYPES.ATTACK: {
-      const damage = Math.round(atk * 1.0);
-      return { damage, label: 'こうげき' };
+    case COMMAND_TYPES.ATTACK:
+      return { targetsSelf: false, damage: Math.round(effAtk * 1.0), label: 'こうげき' };
+    case COMMAND_TYPES.GUARD_STRIKE:
+      return { targetsSelf: false, damage: Math.round(effAtk * 0.5), label: 'みねうち' };
+    case COMMAND_TYPES.CRITICAL:
+      return { targetsSelf: false, damage: Math.round(effAtk * 2), label: 'クリティカル' };
+    case COMMAND_TYPES.COMBO: {
+      const multBefore = attacker.comboMultiplier;
+      const damage = Math.round(effAtk * multBefore);
+      attacker.comboMultiplier = Math.round((multBefore + 0.3) * 10) / 10;
+      return { targetsSelf: false, damage, label: 'コンボ', comboMultBefore: multBefore };
     }
-    case COMMAND_TYPES.GUARD_STRIKE: {
-      const damage = Math.round(atk * 0.5);
-      return { damage, label: 'みねうち' };
+    case COMMAND_TYPES.HEAL: {
+      const heal = Math.round(effAtk * 0.5);
+      return { targetsSelf: true, heal, label: 'ヒール' };
     }
-    case COMMAND_TYPES.CRITICAL: {
-      const damage = Math.round(atk * 2);
-      return { damage, label: 'クリティカル' };
+    case COMMAND_TYPES.POISON: {
+      const damage = Math.round(effAtk * 0.5);
+      const poison = Math.random() < 0.5;
+      return { targetsSelf: false, damage, label: 'ポイズン', poison };
+    }
+    case COMMAND_TYPES.COLLAPSE: {
+      const damage = Math.round(defender.maxHp * 0.1);
+      return { targetsSelf: false, damage, label: 'コラプス', collapseCheck: true };
     }
     case COMMAND_TYPES.MISS:
     default:
-      return { damage: 0, label: 'ミス' };
+      return { targetsSelf: false, damage: 0, label: 'ミス' };
   }
 }
 
 // ---------- アクトカードの山札・手札・捨て札管理 ----------
-
-function shuffleArray(arr) {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
 
 // 10枚のカードから山札を作り、手札3枚を配る
 function createDeckState(cards) {
