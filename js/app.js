@@ -429,6 +429,7 @@ function bindPreview() {
       busy: false,
       arenaColor: null,
       awaitingContinue: false,
+      awaitingDiceRoll: false,
       showPlayerTable: false,
       showCpuTable: false,
       cpuRevealed: new Set(),
@@ -473,6 +474,9 @@ function renderBattle() {
 }
 
 function renderBattleControls(b) {
+  if (b.awaitingDiceRoll) {
+    return `<button class="btn block" id="rollDiceBtn">🎲 サイコロを振る</button>`;
+  }
   if (b.awaitingContinue) {
     return `<button class="btn block" id="continueBtn">▶ タップしてつぎへ</button>`;
   }
@@ -535,6 +539,8 @@ function initBattle() {
   });
   const continueBtn = document.getElementById('continueBtn');
   if (continueBtn) continueBtn.onclick = onContinueClick;
+  const rollDiceBtn = document.getElementById('rollDiceBtn');
+  if (rollDiceBtn) rollDiceBtn.onclick = onContinueClick;
   const togglePlayerBtn = document.getElementById('togglePlayerTable');
   if (togglePlayerBtn) {
     togglePlayerBtn.onclick = () => {
@@ -680,6 +686,18 @@ async function onPlayerPlayCard(cardId) {
     dice = choiceFace;
     b.diceValue = dice;
     b.message = `${attackerLabel}は「チョイス${choiceFace}」で出目${choiceFace}を使用！`;
+    render();
+    await wait(600);
+  } else if (winnerIsPlayer) {
+    b.message = 'あなたの番です';
+    b.awaitingDiceRoll = true;
+    render();
+    await waitForContinueClick();
+    b.awaitingDiceRoll = false;
+
+    dice = rollDice();
+    b.diceValue = dice;
+    b.message = `${attackerLabel}がサイコロを振った…`;
     render();
     await wait(600);
   } else {
