@@ -21,10 +21,13 @@ function rollDice() {
 // コマンド実行結果 { damage, message } を返す
 function resolveCommand(command, atk) {
   switch (command) {
-    case COMMAND_TYPES.ATTACK:
+    case COMMAND_TYPES.ATTACK: {
+      const damage = Math.round(atk * 1.0);
+      return { damage, message: `「こうげき」！ ${damage} のダメージ！` };
+    }
     case COMMAND_TYPES.GUARD_STRIKE: {
       const damage = Math.round(atk * 0.5);
-      return { damage, message: `「${command}」！ ${damage} のダメージ！` };
+      return { damage, message: `「みねうち」！ ${damage} のダメージ！` };
     }
     case COMMAND_TYPES.CRITICAL: {
       const damage = Math.round(atk * 2);

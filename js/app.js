@@ -291,9 +291,13 @@ function renderCharacterCard(char, compact) {
   `;
 }
 
-function renderCommandTable(table) {
+// revealed を渡すと、そのインデックス(出目-1)が含まれていない面は「？」で伏せて表示する
+function renderCommandTable(table, revealed) {
   const cells = table
     .map((cmd, i) => {
+      if (revealed && !revealed.has(i)) {
+        return `<div class="command-cell hidden"><div class="face">出目 ${i + 1}</div><div class="cmd">？</div></div>`;
+      }
       let cls = 'miss';
       if (cmd === COMMAND_TYPES.ATTACK) cls = 'attack';
       else if (cmd === COMMAND_TYPES.CRITICAL) cls = 'critical';
@@ -343,6 +347,11 @@ function bindPreview() {
       message: '',
       round: 1,
       busy: false,
+      arenaColor: null,
+      awaitingContinue: false,
+      showPlayerTable: false,
+      showCpuTable: false,
+      cpuRevealed: new Set(),
     };
     state.screen = 'battle';
     render();
@@ -353,6 +362,7 @@ function bindPreview() {
 
 function renderBattle() {
   const b = state.battle;
+  const arenaStyle = b.arenaColor ? ` style="background:${b.arenaColor};"` : '';
   return `
     <div class="screen">
       <div class="battle-top">
@@ -361,13 +371,29 @@ function renderBattle() {
         ${renderCharacterCard(state.battleCpu, true)}
       </div>
       <div class="round-label">ラウンド ${b.round}</div>
-      <div class="battle-arena">
+      <div class="battle-arena"${arenaStyle}>
         ${renderArenaContent(b)}
       </div>
-      ${!b.busy ? renderHandChoices() : '<div class="subtitle">勝負中<span class="loading-dot">…</span></div>'}
+      ${renderBattleControls(b)}
+      <div class="table-toggle-row">
+        <button class="btn secondary" id="togglePlayerTable">${b.showPlayerTable ? '自分のコマンドを隠す' : '自分のコマンドを見る'}</button>
+        <button class="btn secondary" id="toggleCpuTable">${b.showCpuTable ? '相手のコマンドを隠す' : '相手のコマンドを見る'}</button>
+      </div>
+      ${b.showPlayerTable ? `<div class="section-label">あなたのコマンド表</div>${renderCommandTable(state.battlePlayer.commandTable)}` : ''}
+      ${b.showCpuTable ? `<div class="section-label">CPUのコマンド表(使われた面だけ公開)</div>${renderCommandTable(state.battleCpu.commandTable, b.cpuRevealed)}` : ''}
       <div class="battle-log">${renderLog(b.log)}</div>
     </div>
   `;
+}
+
+function renderBattleControls(b) {
+  if (b.awaitingContinue) {
+    return `<button class="btn block" id="continueBtn">▶ タップしてつぎへ</button>`;
+  }
+  if (!b.busy) {
+    return renderHandChoices();
+  }
+  return '<div class="subtitle">勝負中<span class="loading-dot">…</span></div>';
 }
 
 function renderArenaContent(b) {
@@ -420,10 +446,41 @@ function initBattle() {
       onPlayerChooseHand(btn.dataset.hand);
     };
   });
+  const continueBtn = document.getElementById('continueBtn');
+  if (continueBtn) continueBtn.onclick = onContinueClick;
+  const togglePlayerBtn = document.getElementById('togglePlayerTable');
+  if (togglePlayerBtn) {
+    togglePlayerBtn.onclick = () => {
+      state.battle.showPlayerTable = !state.battle.showPlayerTable;
+      render();
+    };
+  }
+  const toggleCpuBtn = document.getElementById('toggleCpuTable');
+  if (toggleCpuBtn) {
+    toggleCpuBtn.onclick = () => {
+      state.battle.showCpuTable = !state.battle.showCpuTable;
+      render();
+    };
+  }
 }
 
 function addLog(msg) {
   state.battle.log.unshift(msg);
+}
+
+// 攻撃結果の表示後、ユーザーが「つぎへ」をタップするまで待つ
+let continueResolver = null;
+function waitForContinueClick() {
+  return new Promise((resolve) => {
+    continueResolver = resolve;
+  });
+}
+function onContinueClick() {
+  if (continueResolver) {
+    const resolve = continueResolver;
+    continueResolver = null;
+    resolve();
+  }
 }
 
 async function onPlayerChooseHand(hand) {
@@ -433,6 +490,7 @@ async function onPlayerChooseHand(hand) {
   b.cpuHand = null;
   b.diceValue = null;
   b.message = '';
+  b.arenaColor = null;
   render();
 
   await wait(400);
@@ -457,6 +515,7 @@ async function onPlayerChooseHand(hand) {
   }
 
   const winnerIsPlayer = result === 'player';
+  b.arenaColor = winnerIsPlayer ? '#239dda' : '#e60012';
   addLog(`じゃんけん: ${winnerIsPlayer ? 'あなた' : 'CPU'}の勝ち！ (${hand} vs ${cpuHand})`);
   b.message = winnerIsPlayer ? 'じゃんけんに勝った！ あなたの攻撃！' : 'じゃんけんに負けた… CPUの攻撃！';
   render();
@@ -471,13 +530,20 @@ async function onPlayerChooseHand(hand) {
   render();
   await wait(600);
 
+  if (!winnerIsPlayer) {
+    b.cpuRevealed.add(dice - 1);
+  }
+
   const command = attacker.commandTable[dice - 1];
   const { damage, message } = resolveCommand(command, attacker.atk);
   defender.hp = Math.max(0, defender.hp - damage);
   addLog(`${attacker.name}: 出目${dice} → ${message}`);
   b.message = message;
+  b.awaitingContinue = true;
   render();
-  await wait(900);
+
+  await waitForContinueClick();
+  b.awaitingContinue = false;
 
   if (defender.hp <= 0) {
     state.battleResult = winnerIsPlayer ? 'win' : 'lose';
@@ -491,6 +557,7 @@ async function onPlayerChooseHand(hand) {
   b.cpuHand = null;
   b.diceValue = null;
   b.message = '';
+  b.arenaColor = null;
   b.busy = false;
   render();
 }

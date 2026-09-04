@@ -319,6 +319,19 @@ body {
 .command-cell.miss .cmd { color: var(--miss); }
 .command-cell.critical .cmd { color: #ffcf4d; }
 .command-cell.guard .cmd { color: #ff9f6b; }
+.command-cell.hidden .cmd { color: var(--text-dim); }
+.command-cell.hidden { opacity: 0.6; }
+
+.table-toggle-row {
+  display: flex;
+  gap: 10px;
+}
+
+.table-toggle-row .btn {
+  flex: 1;
+  padding: 10px 8px;
+  font-size: 13px;
+}
 
 .section-label {
   font-size: 12px;
