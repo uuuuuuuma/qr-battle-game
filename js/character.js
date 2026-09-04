@@ -10,8 +10,9 @@
 // 3. サイコロの目(1〜6)それぞれにコマンドを割り当てたコマンド表を3パターン作り、
 //    プレイヤーはその中から使用する1つを選ぶ。「クリティカル」「コンボ」「ポイズン」は
 //    「Sコマンド」と呼び、各コマンド表に必ず1つ以上入るようにする
-// 4. キャラクター生成後、同じQR文字列から10枚のアクトカードを生成する。
-//    さらにそのうち3枚は完全ランダム(QRに依存しない)なカードに差し替える
+// 4. キャラクター生成後、同じQR文字列から10枚のアクトカード(候補)を生成し、
+//    さらに完全ランダム(QRに依存しない)なカードを3枚追加した計13枚から、
+//    プレイヤーが実際に使う10枚を選ぶ
 
 const COMMAND_TYPES = {
   ATTACK: 'こうげき',
@@ -102,7 +103,8 @@ function generateCharacterFromText(text, name, imageDataUrl) {
     atk,
     commandTableOptions,
     commandTable: null, // 3択の中から選んだらセットされる
-    actCards: [],
+    actCardPool: [], // 13枚の候補(生成直後に入る)
+    actCards: [], // 13枚のうちプレイヤーが選んだ10枚
     focusOverrides: {},
     comboMultiplier: 1, // 「コンボ」を使うたびに+0.3され、ゲーム終了まで持続する
     poisoned: false,
@@ -115,17 +117,18 @@ function generateCpuCharacter() {
   const seedText = 'CPU-' + Date.now() + '-' + Math.floor(Math.random() * 1000000);
   const cpu = generateCharacterFromText(seedText, 'CPU', null);
   cpu.commandTable = cpu.commandTableOptions[Math.floor(Math.random() * cpu.commandTableOptions.length)];
-  cpu.actCards = generateActCards(seedText, 'CPU');
+  cpu.actCardPool = generateActCardPool(seedText, 'CPU');
+  cpu.actCards = shuffleArray(cpu.actCardPool).slice(0, 10); // CPUはランダムに10枚選ぶ
   return cpu;
 }
 
 // ---------- アクトカード生成 ----------
-// スピード(1〜10)と追加効果を持つカードを10枚生成する。
+// スピード(1〜10)と追加効果を持つカードを10枚生成する(QR由来の疑似乱数)。
 // 少なくとも3枚はスピード7〜10になるようにする。
-// さらに、10枚とは別に完全ランダム(QRに依存しないMath.random)なカードを3枚作り、
-// そのうち3枚のスロットと差し替える(毎回結果が変わる)
+// さらに、10枚とは別に完全ランダム(QRに依存しないMath.random)なカードを3枚作る。
+// 合計13枚の中から、実際にゲームで使う10枚をプレイヤーが選ぶ。
 
-function generateActCards(text, name) {
+function generateActCardPool(text, name) {
   const rand = createSeededRandom(text + '::cards::' + name);
 
   const speeds = [];
@@ -142,7 +145,7 @@ function generateActCards(text, name) {
 
   const effectPool = [EFFECT_TYPES.BUFF, EFFECT_TYPES.GUARD, EFFECT_TYPES.FOCUS, EFFECT_TYPES.CHOICE];
 
-  const cards = speeds.map((speed, i) => {
+  const baseCards = speeds.map((speed, i) => {
     const effectType = effectPool[Math.floor(rand() * effectPool.length)];
     const n = rollEffectN(rand, speed, effectType);
     return {
@@ -151,30 +154,29 @@ function generateActCards(text, name) {
       effectType,
       n,
       label: formatEffectLabel(effectType, n),
+      isWild: false,
     };
   });
 
-  // 完全ランダムなカードを3枚生成し、ランダムな3スロットと差し替える
-  const wildSlots = shuffleArray([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).slice(0, 3);
-  wildSlots.forEach((slot, i) => {
-    cards[slot] = generateRandomActCard(name, slot, i);
-  });
+  // 10枚とは別に、完全ランダムなカードを3枚作る
+  const wildCards = [0, 1, 2].map((i) => generateRandomActCard(name, i));
 
-  return cards;
+  return baseCards.concat(wildCards); // 合計13枚
 }
 
 // スピードに関係なく完全ランダムに効果値を決める(Math.random。QRに依存しない)
-function generateRandomActCard(name, slot, wildIndex) {
+function generateRandomActCard(name, wildIndex) {
   const speed = 1 + Math.floor(Math.random() * 10);
   const effectPool = [EFFECT_TYPES.BUFF, EFFECT_TYPES.GUARD, EFFECT_TYPES.FOCUS, EFFECT_TYPES.CHOICE];
   const effectType = effectPool[Math.floor(Math.random() * effectPool.length)];
   const n = rollRandomEffectN(effectType);
   return {
-    id: `${name}-wild-${slot}-${wildIndex}-${speed}-${effectType}-${n}`,
+    id: `${name}-wild-${wildIndex}-${speed}-${effectType}-${n}`,
     speed,
     effectType,
     n,
     label: formatEffectLabel(effectType, n),
+    isWild: true,
   };
 }
 

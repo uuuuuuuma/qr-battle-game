@@ -2,11 +2,13 @@
 
 const state = {
   screen: 'home',
+  playerName: '',
   qrText: null,
   photoDataUrl: null,
   photoFacingMode: 'user',
   playerCharacter: null,
   cpuCharacter: null,
+  actCardSelection: null,
   battlePlayer: null,
   battleCpu: null,
   playerDeck: null,
@@ -72,6 +74,10 @@ function render() {
       app.innerHTML = renderSelectCommandTable();
       bindSelectCommandTable();
       break;
+    case 'selectActCards':
+      app.innerHTML = renderSelectActCards();
+      bindSelectActCards();
+      break;
     case 'preview':
       app.innerHTML = renderPreview();
       bindPreview();
@@ -95,6 +101,10 @@ function renderHome() {
       <div class="spacer"></div>
       <div class="title">QRバトル</div>
       <div class="subtitle">QRコードを読み取って自分だけのキャラクターを作り、CPUと対戦しよう。</div>
+      <div class="name-input-row">
+        <label class="section-label" for="playerNameInput">キャラクターの名前(省略可)</label>
+        <input type="text" id="playerNameInput" placeholder="あなた" maxlength="10" value="${escapeHtml(state.playerName || '')}" />
+      </div>
       <div class="spacer"></div>
       <button class="btn block" id="startBtn">QRコードでキャラをつくる</button>
       <div class="spacer"></div>
@@ -103,6 +113,9 @@ function renderHome() {
 }
 
 function bindHome() {
+  document.getElementById('playerNameInput').oninput = (e) => {
+    state.playerName = e.target.value;
+  };
   document.getElementById('startBtn').onclick = () => {
     state.screen = 'scanQr';
     render();
@@ -273,8 +286,9 @@ function capturePhoto() {
 function finalizePlayerCharacter(dataUrl) {
   stopCamera();
   state.photoDataUrl = dataUrl;
-  state.playerCharacter = generateCharacterFromText(state.qrText, 'あなた', dataUrl);
-  state.playerCharacter.actCards = generateActCards(state.qrText, 'あなた');
+  const name = (state.playerName && state.playerName.trim()) || 'あなた';
+  state.playerCharacter = generateCharacterFromText(state.qrText, name, dataUrl);
+  state.playerCharacter.actCardPool = generateActCardPool(state.qrText, name);
   state.screen = 'selectCommandTable';
   render();
 }
@@ -317,10 +331,74 @@ function bindSelectCommandTable() {
     btn.onclick = () => {
       const idx = Number(btn.dataset.optionIndex);
       state.playerCharacter.commandTable = state.playerCharacter.commandTableOptions[idx];
-      state.screen = 'preview';
+      // デフォルトでは完全ランダムのワイルドカードを除いた10枚(QR由来)を選択済みにしておく
+      state.actCardSelection = new Set(
+        state.playerCharacter.actCardPool.filter((c) => !c.isWild).map((c) => c.id)
+      );
+      state.screen = 'selectActCards';
       render();
     };
   });
+}
+
+// ---------- アクトカード選択画面 ----------
+
+function renderSelectActCards() {
+  const pool = state.playerCharacter.actCardPool;
+  const selection = state.actCardSelection;
+  const cardsHtml = pool
+    .map((card) => {
+      const isSelected = selection.has(card.id);
+      return `
+        <button class="act-card ${effectClass(card.effectType)} ${isSelected ? 'selected' : ''}" data-card-id="${card.id}">
+          ${card.isWild ? '<div class="wild-badge">WILD</div>' : ''}
+          <div class="act-card-speed">SPD ${card.speed}</div>
+          <div class="act-card-label">${escapeHtml(card.label)}</div>
+        </button>
+      `;
+    })
+    .join('');
+  return `
+    <div class="screen">
+      <div class="top-bar">
+        <button class="icon-btn" id="backBtn">← もどる</button>
+        <div></div>
+      </div>
+      <div class="title" style="font-size:20px;">使うアクトカードを選ぶ</div>
+      <div class="subtitle">13枚(うちWILDの3枚は完全ランダム)の中から、実際に使う10枚を選んでください</div>
+      <div class="selection-count">選択中: ${selection.size} / 10</div>
+      <div class="act-card-grid select-grid">${cardsHtml}</div>
+      <div class="spacer"></div>
+      <button class="btn block" id="confirmCardsBtn" ${selection.size === 10 ? '' : 'disabled'}>これで決定</button>
+    </div>
+  `;
+}
+
+function bindSelectActCards() {
+  document.getElementById('backBtn').onclick = () => {
+    state.screen = 'selectCommandTable';
+    render();
+  };
+  document.querySelectorAll('.select-grid .act-card').forEach((btn) => {
+    btn.onclick = () => {
+      const id = btn.dataset.cardId;
+      const selection = state.actCardSelection;
+      if (selection.has(id)) {
+        selection.delete(id);
+      } else {
+        if (selection.size >= 10) return; // 10枚まで
+        selection.add(id);
+      }
+      render();
+    };
+  });
+  const confirmBtn = document.getElementById('confirmCardsBtn');
+  confirmBtn.onclick = () => {
+    if (state.actCardSelection.size !== 10) return;
+    state.playerCharacter.actCards = state.playerCharacter.actCardPool.filter((c) => state.actCardSelection.has(c.id));
+    state.screen = 'preview';
+    render();
+  };
 }
 
 // ---------- キャラクターカード共通表示 ----------
@@ -338,6 +416,23 @@ function renderCharacterCard(char, compact) {
         <div class="stat-row"><span>HP ${char.hp}/${char.maxHp}</span><span>攻撃力 ${char.atk}</span></div>
         <div class="hp-bar-track"><div class="hp-bar-fill ${hpPct <= 30 ? 'low' : ''}" style="width:${hpPct}%"></div></div>
       </div>
+    </div>
+  `;
+}
+
+// 対戦画面用: 左右に並べて表示する縦型カード(写真は大きめ)。poisonHit が true の間、紫のエフェクトを付ける
+function renderVsCharacterCard(char, poisonHit) {
+  const avatar = char.image
+    ? `<img class="char-avatar-lg" src="${char.image}" alt="${escapeHtml(char.name)}" />`
+    : `<div class="char-avatar-lg">${char.name === 'CPU' ? '🤖' : '🧑'}</div>`;
+  const hpPct = Math.max(0, Math.round((char.hp / char.maxHp) * 100));
+  return `
+    <div class="vs-char-card ${poisonHit ? 'poison-hit' : ''}">
+      ${avatar}
+      <div class="char-name">${escapeHtml(char.name)}${char.poisoned ? ' <span class="status-badge poison">🧪毒</span>' : ''}</div>
+      <div class="stat-row"><span>HP ${char.hp}/${char.maxHp}</span></div>
+      <div class="stat-row"><span>攻撃力 ${char.atk}</span></div>
+      <div class="hp-bar-track"><div class="hp-bar-fill ${hpPct <= 30 ? 'low' : ''}" style="width:${hpPct}%"></div></div>
     </div>
   `;
 }
@@ -376,6 +471,38 @@ function effectClass(effectType) {
   }
 }
 
+// ---------- コマンド使用時のエフェクト ----------
+
+function effectVisualIcon(cmd) {
+  switch (cmd) {
+    case COMMAND_TYPES.ATTACK: return '⚔️';
+    case COMMAND_TYPES.GUARD_STRIKE: return '🗡️';
+    case COMMAND_TYPES.CRITICAL: return '💥';
+    case COMMAND_TYPES.COMBO: return '🔗';
+    case COMMAND_TYPES.HEAL: return '💚';
+    case COMMAND_TYPES.POISON: return '☠️';
+    case COMMAND_TYPES.COLLAPSE: return '🌀';
+    case COMMAND_TYPES.MISS:
+    default:
+      return '💨';
+  }
+}
+
+function effectVisualClass(cmd) {
+  switch (cmd) {
+    case COMMAND_TYPES.ATTACK: return 'fx-attack';
+    case COMMAND_TYPES.GUARD_STRIKE: return 'fx-guard';
+    case COMMAND_TYPES.CRITICAL: return 'fx-critical';
+    case COMMAND_TYPES.COMBO: return 'fx-combo';
+    case COMMAND_TYPES.HEAL: return 'fx-heal';
+    case COMMAND_TYPES.POISON: return 'fx-poison';
+    case COMMAND_TYPES.COLLAPSE: return 'fx-collapse';
+    case COMMAND_TYPES.MISS:
+    default:
+      return 'fx-miss';
+  }
+}
+
 function renderCardFace(card, small) {
   return `
     <div class="act-card ${small ? 'small' : ''} ${effectClass(card.effectType)}">
@@ -402,7 +529,7 @@ function renderPreview() {
       ${renderCharacterCard(state.playerCharacter, false)}
       <div class="section-label">コマンド表(サイコロの目 → 行動)</div>
       ${renderCommandTable(state.playerCharacter.commandTable)}
-      <div class="section-label">アクトカード(全10枚・バトル開始時に3枚配られます)</div>
+      <div class="section-label">選んだアクトカード(10枚・バトル開始時に3枚配られます)</div>
       <div class="act-card-grid">${state.playerCharacter.actCards.map((c) => renderCardFace(c, true)).join('')}</div>
       <div class="spacer"></div>
       <button class="btn block" id="battleStartBtn">バトル開始</button>
@@ -416,6 +543,7 @@ function bindPreview() {
     state.qrText = null;
     state.photoDataUrl = null;
     state.playerCharacter = null;
+    state.actCardSelection = null;
     render();
   };
   document.getElementById('battleStartBtn').onclick = () => {
@@ -444,6 +572,9 @@ function bindPreview() {
       cpuGuardMult: null,
       playerChoiceFace: null,
       cpuChoiceFace: null,
+      commandEffect: null,
+      poisonMessages: [],
+      poisonHitSides: [],
     };
     state.screen = 'battle';
     render();
@@ -457,10 +588,10 @@ function renderBattle() {
   const arenaStyle = b.arenaColor ? ` style="background:${b.arenaColor};"` : '';
   return `
     <div class="screen">
-      <div class="battle-top">
-        ${renderCharacterCard(state.battlePlayer, true)}
+      <div class="vs-arena">
+        ${renderVsCharacterCard(state.battlePlayer, b.poisonHitSides.includes('player'))}
         <div class="vs-label">VS</div>
-        ${renderCharacterCard(state.battleCpu, true)}
+        ${renderVsCharacterCard(state.battleCpu, b.poisonHitSides.includes('cpu'))}
       </div>
       <div class="round-label">ラウンド ${b.round}</div>
       <div class="battle-arena"${arenaStyle}>
@@ -514,8 +645,14 @@ function renderArenaContent(b) {
   if (b.diceValue) {
     html += `<div class="dice-display">🎲 ${b.diceValue}</div>`;
   }
+  if (b.commandEffect) {
+    html += `<div class="command-effect ${effectVisualClass(b.commandEffect.type)}">${effectVisualIcon(b.commandEffect.type)} ${escapeHtml(b.commandEffect.label)}</div>`;
+  }
   if (b.message) {
     html += `<div class="result-message">${escapeHtml(b.message)}</div>`;
+  }
+  if (b.poisonMessages && b.poisonMessages.length > 0) {
+    html += b.poisonMessages.map((msg) => `<div class="poison-message">🧪 ${escapeHtml(msg)}</div>`).join('');
   }
   return html;
 }
@@ -633,6 +770,9 @@ function pruneFocusOverrides(character, upcomingRound) {
 async function onPlayerPlayCard(cardId) {
   const b = state.battle;
   b.busy = true;
+  b.commandEffect = null;
+  b.poisonMessages = [];
+  b.poisonHitSides = [];
 
   const playerCard = playCard(state.playerDeck, cardId);
   b.playerCard = playerCard;
@@ -665,11 +805,7 @@ async function onPlayerPlayCard(cardId) {
   if (playerCard.speed === cpuCard.speed) {
     addLog(`スピード${playerCard.speed}で同速！ このラウンドはどちらも攻撃できない`);
     b.message = `同速(${playerCard.speed})…このラウンドは攻撃なし`;
-    b.awaitingContinue = true;
-    render();
-    await waitForContinueClick();
-    b.awaitingContinue = false;
-    finishRound(null);
+    await resolveRoundEnd(null);
     return;
   }
 
@@ -720,6 +856,7 @@ async function onPlayerPlayCard(cardId) {
   const command = effectiveTable[dice - 1];
   const atkBonus = winnerIsPlayer ? b.playerAtkBonus : b.cpuAtkBonus;
   const result = resolveCommand(command, attacker, defender, atkBonus);
+  b.commandEffect = { type: command, label: result.label };
 
   let resultText;
   let hitDefender = false;
@@ -761,22 +898,17 @@ async function onPlayerPlayCard(cardId) {
 
   addLog(`${attackerLabel}: 出目${dice} → ${resultText}`);
   b.message = resultText;
-  b.awaitingContinue = true;
-  render();
 
-  await waitForContinueClick();
-  b.awaitingContinue = false;
-
-  finishRound(hitDefender ? defender : null);
+  await resolveRoundEnd(hitDefender ? defender : null);
 }
 
-// 毒状態のキャラクターに、残りHPの10%のダメージを与える(ラウンド終了時)
-function applyPoisonTick(character, label) {
-  if (!character.poisoned || character.hp <= 0) return;
+// 毒状態のキャラクターに、残りHPの10%のダメージを与える。与えたダメージ量を返す(0なら毒なし/対象外)
+function tickPoison(character) {
+  if (!character.poisoned || character.hp <= 0) return 0;
   const dmg = Math.round(character.hp * 0.1);
-  if (dmg <= 0) return;
+  if (dmg <= 0) return 0;
   character.hp = Math.max(0, character.hp - dmg);
-  addLog(`${label}は毒のダメージ！ ${dmg}のダメージ`);
+  return dmg;
 }
 
 function endBattle(result) {
@@ -785,24 +917,54 @@ function endBattle(result) {
   render();
 }
 
-function finishRound(defender) {
+// サイコロを振った後の処理(ダメージ確定など)が完了した直後に毒を発生させ、
+// コマンド結果のすぐ下に毒ダメージを表示してから「タップしてつぎへ」を待つ。
+// combatDefender: 通常攻撃で倒れた場合はその対象、それ以外(ミス/ヒール/同速など)は null
+async function resolveRoundEnd(combatDefender) {
   const b = state.battle;
-  if (defender && defender.hp <= 0) {
-    endBattle(defender === state.battleCpu ? 'win' : 'lose');
+
+  if (combatDefender && combatDefender.hp <= 0) {
+    // 通常攻撃で決着した場合は毒処理を行わずそのまま結果へ
+    b.awaitingContinue = true;
+    render();
+    await waitForContinueClick();
+    b.awaitingContinue = false;
+    endBattle(combatDefender === state.battleCpu ? 'win' : 'lose');
     return;
   }
 
-  applyPoisonTick(state.battlePlayer, 'あなた');
+  const playerPoisonDmg = tickPoison(state.battlePlayer);
+  if (playerPoisonDmg > 0) {
+    b.poisonMessages.push(`あなたは毒で${playerPoisonDmg}のダメージ！`);
+    b.poisonHitSides.push('player');
+    addLog(`あなたは毒で${playerPoisonDmg}のダメージ`);
+  }
+  const cpuPoisonDmg = tickPoison(state.battleCpu);
+  if (cpuPoisonDmg > 0) {
+    b.poisonMessages.push(`CPUは毒で${cpuPoisonDmg}のダメージ！`);
+    b.poisonHitSides.push('cpu');
+    addLog(`CPUは毒で${cpuPoisonDmg}のダメージ`);
+  }
+
+  b.awaitingContinue = true;
+  render();
+  await waitForContinueClick();
+  b.awaitingContinue = false;
+
   if (state.battlePlayer.hp <= 0) {
     endBattle('lose');
     return;
   }
-  applyPoisonTick(state.battleCpu, 'CPU');
   if (state.battleCpu.hp <= 0) {
     endBattle('win');
     return;
   }
 
+  advanceToNextRound();
+}
+
+function advanceToNextRound() {
+  const b = state.battle;
   pruneFocusOverrides(state.battlePlayer, b.round + 1);
   pruneFocusOverrides(state.battleCpu, b.round + 1);
   refillHand(state.playerDeck);
@@ -814,6 +976,9 @@ function finishRound(defender) {
   b.diceValue = null;
   b.message = '';
   b.arenaColor = null;
+  b.commandEffect = null;
+  b.poisonMessages = [];
+  b.poisonHitSides = [];
   b.busy = false;
   render();
 }
@@ -839,6 +1004,7 @@ function bindResult() {
     state.photoDataUrl = null;
     state.playerCharacter = null;
     state.cpuCharacter = null;
+    state.actCardSelection = null;
     state.battlePlayer = null;
     state.battleCpu = null;
     state.playerDeck = null;
