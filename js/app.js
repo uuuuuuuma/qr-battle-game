@@ -60,11 +60,18 @@ function mediaDevicesAvailable() {
 
 // onTap: 通常タップ時、onHold: 長押し(holdMs経過)時に呼ばれる。
 // クリックイベントには頼らず pointerdown/up 自体でタップと長押しを判定する。
+//
+// 注意: onTap は通常 render() を同期的に呼び出し、innerHTML を丸ごと再構築するため、
+// タップした要素自体がDOMから消えて新しい要素に差し替わる。iOS Safari 等がpointerup後に
+// 送ってくる合成 click イベントは、その新しい要素(同じ位置の別インスタンス)に届くことがあり、
+// 要素ローカルな状態で「直前に処理済みか」を判定すると新要素では判定できず、onTap が
+// 二重発火して選択状態が元に戻ってしまう(たまに反転しない不具合の原因)。
+// そのため、直近のタップ処理時刻はモジュール共有の変数で管理する。
+let lastPointerTapAt = 0;
 function bindTapHold(el, { onTap, onHold, holdMs = 500 } = {}) {
   if (!el) return;
   let timer = null;
   let held = false;
-  let pointerHandledAt = 0;
   const clearTimer = () => {
     if (timer) {
       clearTimeout(timer);
@@ -85,7 +92,7 @@ function bindTapHold(el, { onTap, onHold, holdMs = 500 } = {}) {
   el.addEventListener('pointerup', () => {
     clearTimer();
     if (!held && onTap) onTap();
-    pointerHandledAt = Date.now();
+    lastPointerTapAt = Date.now();
     held = false;
   });
   el.addEventListener('pointerleave', clearTimer);
@@ -94,7 +101,7 @@ function bindTapHold(el, { onTap, onHold, holdMs = 500 } = {}) {
   // キーボード操作(Enter/Space)や pointer イベント非対応環境向けのフォールバック。
   // 直前の pointerup で既に処理済みの場合は click の二重発火を無視する。
   el.addEventListener('click', () => {
-    if (Date.now() - pointerHandledAt < 400) return;
+    if (Date.now() - lastPointerTapAt < 500) return;
     if (onTap) onTap();
   });
 }
@@ -233,6 +240,10 @@ function render() {
     case 'enterName':
       app.innerHTML = renderEnterName();
       bindEnterName();
+      break;
+    case 'characterInfo':
+      app.innerHTML = renderCharacterInfo();
+      bindCharacterInfo();
       break;
     case 'selectCommandTable':
       app.innerHTML = renderSelectCommandTable();
@@ -502,8 +513,67 @@ function finalizePlayerCharacter(dataUrl) {
   state.playerCharacter.speedCardBase = generateSpeedCardBase(state.qrText, name);
   state.playerCharacter.skillCardBase = generateSkillCardBase(state.qrText, name);
   state.playerCharacter.wildcardSetOptions = generateWildcardSetOptions(name);
-  state.screen = 'selectCommandTable';
+  state.screen = 'characterInfo';
   render();
+}
+
+// ---------- キャラクター情報(QR由来)画面・ポップアップ共通 ----------
+
+// キャラクターの基本情報(写真・名前・ステータス・QR由来のスピード/スキルカード)を表示する中身のHTML。
+// フル画面表示(renderCharacterInfo)とポップアップ(showCharacterInfoPopup)の両方で使い回す。
+function buildCharacterInfoBody(char) {
+  const avatar = char.image
+    ? `<img class="char-avatar" src="${char.image}" alt="${escapeHtml(char.name)}" />`
+    : `<div class="char-avatar">🧑</div>`;
+  return `
+    <div style="display:flex; justify-content:center;">${avatar}</div>
+    <div class="char-name" style="text-align:center; margin-top:8px; font-size:18px;">${escapeHtml(char.name)}</div>
+    <div class="stat-row" style="justify-content:center; gap:16px; margin-top:4px;"><span>HP ${char.maxHp}</span><span>攻撃力 ${char.baseAtk}</span></div>
+    <div class="section-label">スピードカード(10枚)</div>
+    <div class="act-card-grid">${char.speedCardBase.map((c) => renderSpeedCardFace(c, true)).join('')}</div>
+    <div class="section-label">スキルカード(6枚・長押しで説明)</div>
+    <div class="act-card-grid">${char.skillCardBase.map((c) => renderSkillCardFace(c, true)).join('')}</div>
+  `;
+}
+
+function showCharacterInfoPopup(char) {
+  showPopup(`${char.name}の情報`, buildCharacterInfoBody(char));
+  bindSkillCardPopupsIn(document.getElementById('popupBody'), char.skillCardBase);
+}
+
+// 選択画面の上部に「今のキャラ情報」ボタンを設置し、ポップアップで確認できるようにする
+function bindCharacterInfoButton() {
+  const btn = document.getElementById('charInfoBtn');
+  if (btn) btn.onclick = () => showCharacterInfoPopup(state.playerCharacter);
+}
+
+function renderCharacterInfo() {
+  const char = state.playerCharacter;
+  return `
+    <div class="screen">
+      <div class="top-bar">
+        <button class="icon-btn" id="backBtn">← もどる</button>
+        <div></div>
+      </div>
+      <div class="title" style="font-size:20px;">キャラクター情報</div>
+      <div class="subtitle">QRコードから生成された、あなたのキャラクターの基本情報です</div>
+      ${buildCharacterInfoBody(char)}
+      <div class="spacer"></div>
+      <button class="btn block" id="nextBtn">つぎへ</button>
+    </div>
+  `;
+}
+
+function bindCharacterInfo() {
+  document.getElementById('backBtn').onclick = () => {
+    state.screen = 'enterName';
+    render();
+  };
+  document.getElementById('nextBtn').onclick = () => {
+    state.screen = 'selectCommandTable';
+    render();
+  };
+  bindSkillCardPopupsIn(document, state.playerCharacter.skillCardBase);
 }
 
 // ---------- コマンド表選択画面 ----------
@@ -523,7 +593,7 @@ function renderSelectCommandTable() {
     <div class="screen">
       <div class="top-bar">
         <button class="icon-btn" id="backBtn">← もどる</button>
-        <div></div>
+        <button class="icon-btn" id="charInfoBtn">🪪 キャラ情報</button>
       </div>
       <div class="title" style="font-size:20px;">コマンド表を選ぶ</div>
       <div class="subtitle">3つの候補から、バトルで使うコマンド表を1つ選んでください(コマンドを長押しすると説明が見られます)</div>
@@ -538,7 +608,7 @@ function bindSelectCommandTable() {
       state.editingFromReady = false;
       state.screen = 'ready';
     } else {
-      state.screen = 'enterName';
+      state.screen = 'characterInfo';
     }
     render();
   };
@@ -557,6 +627,7 @@ function bindSelectCommandTable() {
     };
   });
   bindCommandTablePopups();
+  bindCharacterInfoButton();
 }
 
 // ---------- ワイルドカードセット選択画面 ----------
@@ -579,7 +650,7 @@ function renderSelectWildcardSet() {
     <div class="screen">
       <div class="top-bar">
         <button class="icon-btn" id="backBtn">← もどる</button>
-        <div></div>
+        <button class="icon-btn" id="charInfoBtn">🪪 キャラ情報</button>
       </div>
       <div class="title" style="font-size:20px;">ワイルドカードセットを選ぶ</div>
       <div class="subtitle">完全ランダムな「スピード2枚+スキル3枚」のセットが3つ。1つ選ぶとカード候補に追加されます</div>
@@ -593,6 +664,7 @@ function bindSelectWildcardSet() {
     state.screen = 'selectCommandTable';
     render();
   };
+  bindCharacterInfoButton();
   document.querySelectorAll('[data-set-index]').forEach((btn) => {
     btn.onclick = () => {
       const idx = Number(btn.dataset.setIndex);
@@ -1016,8 +1088,6 @@ function bindReady() {
       arenaColor: null,
       awaitingContinue: false,
       awaitingDiceRoll: false,
-      showPlayerTable: false,
-      showCpuTable: false,
       cpuRevealed: new Set(), // コマンド表(出目)の公開状況
       cpuSkillRevealed: new Set(), // 相手のスキルカードの公開状況(使ったら公開)
       playerAtkBonus: 0,
@@ -1061,16 +1131,11 @@ function renderBattle() {
         ${renderArenaContent(b)}
       </div>
       ${renderBattleControls(b)}
-      <div class="table-toggle-row">
-        <button class="btn secondary" id="togglePlayerTable">${b.showPlayerTable ? '自分のコマンドを隠す' : '自分のコマンドを見る'}</button>
-        <button class="btn secondary" id="toggleCpuTable">${b.showCpuTable ? '相手のコマンドを隠す' : '相手のコマンドを見る'}</button>
-      </div>
-      ${b.showPlayerTable ? `<div class="section-label">あなたのコマンド表(長押しで説明)</div>${renderCommandTable(state.battlePlayer.commandTable)}` : ''}
-      ${b.showCpuTable ? `<div class="section-label">CPUのコマンド表(使われた面だけ公開・長押しで説明)</div>${renderCommandTable(state.battleCpu.commandTable, b.cpuRevealed)}` : ''}
-      <div class="table-toggle-row">
-        <button class="btn secondary" id="peekCpuSpeedBtn">相手のスピードカードを見る</button>
-        <button class="btn secondary" id="peekCpuSkillBtn">相手のスキルカードを見る</button>
-      </div>
+      <div class="section-label">あなたのコマンド表(長押しで説明)</div>
+      ${renderCommandTable(state.battlePlayer.commandTable)}
+      <div class="section-label">CPUのコマンド表(使われた面だけ公開・長押しで説明)</div>
+      ${renderCommandTable(state.battleCpu.commandTable, b.cpuRevealed)}
+      <button class="btn secondary block" id="peekCpuCardsBtn">相手のカード一覧を見る</button>
       <div class="battle-log">${renderLog(b.log)}</div>
     </div>
   `;
@@ -1114,6 +1179,16 @@ function buildOpponentSkillCardsPopupBody() {
     })
     .join('');
   return `<div class="peek-grid">${cellsHtml}</div>`;
+}
+
+// スピード・スキル両方のCPUカード一覧をまとめて1つのポップアップで表示する
+function buildOpponentCardsPopupBody() {
+  return `
+    <div class="section-label">スピードカード(常に公開・✔は使用済み)</div>
+    ${buildOpponentSpeedCardsPopupBody()}
+    <div class="section-label" style="margin-top:12px;">スキルカード(使ったものだけ公開・✔は使用済み)</div>
+    ${buildOpponentSkillCardsPopupBody()}
+  `;
 }
 
 function renderBattleControls(b) {
@@ -1234,27 +1309,9 @@ function initBattle() {
   if (continueBtn) continueBtn.onclick = onContinueClick;
   const rollDiceBtn = document.getElementById('rollDiceBtn');
   if (rollDiceBtn) rollDiceBtn.onclick = onContinueClick;
-  const togglePlayerBtn = document.getElementById('togglePlayerTable');
-  if (togglePlayerBtn) {
-    togglePlayerBtn.onclick = () => {
-      state.battle.showPlayerTable = !state.battle.showPlayerTable;
-      render();
-    };
-  }
-  const toggleCpuBtn = document.getElementById('toggleCpuTable');
-  if (toggleCpuBtn) {
-    toggleCpuBtn.onclick = () => {
-      state.battle.showCpuTable = !state.battle.showCpuTable;
-      render();
-    };
-  }
-  const peekCpuSpeedBtn = document.getElementById('peekCpuSpeedBtn');
-  if (peekCpuSpeedBtn) {
-    peekCpuSpeedBtn.onclick = () => showPopup('CPUのスピードカード', buildOpponentSpeedCardsPopupBody());
-  }
-  const peekCpuSkillBtn = document.getElementById('peekCpuSkillBtn');
-  if (peekCpuSkillBtn) {
-    peekCpuSkillBtn.onclick = () => showPopup('CPUのスキルカード(使ったものだけ公開・✔は使用済み)', buildOpponentSkillCardsPopupBody());
+  const peekCpuCardsBtn = document.getElementById('peekCpuCardsBtn');
+  if (peekCpuCardsBtn) {
+    peekCpuCardsBtn.onclick = () => showPopup('CPUのカード一覧', buildOpponentCardsPopupBody());
   }
   bindCommandTablePopups();
   bindVsCharacterPopups(document, state.battlePlayer, state.battleCpu);
