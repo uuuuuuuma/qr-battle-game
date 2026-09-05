@@ -239,8 +239,27 @@ function bindCharacterEffectsPopup(el, character) {
 
 // ---------- render dispatcher ----------
 
+// 常設の上部バー(現在のキャラクターのアバター・名前)。#app の外にあるので
+// render() のたびに毎回内容を更新する
+function updateIdentityBar() {
+  const avatarEl = document.getElementById('identityAvatar');
+  const nameEl = document.getElementById('identityName');
+  if (!avatarEl || !nameEl) return;
+  const char = state.playerCharacter;
+  if (char) {
+    avatarEl.innerHTML = char.image
+      ? `<img src="${char.image}" alt="${escapeHtml(char.name)}" />`
+      : '🧑';
+    nameEl.textContent = char.name;
+  } else {
+    avatarEl.innerHTML = '⚔️';
+    nameEl.textContent = 'QRバトル';
+  }
+}
+
 function render() {
   stopCamera();
+  updateIdentityBar();
   const app = document.getElementById('app');
   switch (state.screen) {
     case 'home':
@@ -300,10 +319,43 @@ function render() {
 
 // ---------- ホーム画面 ----------
 
+// ホーム画面用のQRコード円形装飾フレーム(装飾のみ・タップ操作は無い)
+function renderQrOrnament() {
+  return `
+    <div class="qr-ornament-wrap">
+      <svg width="168" height="168" viewBox="0 0 168 168">
+        <circle class="qr-ring-outer" cx="84" cy="84" r="78" />
+        <circle class="qr-ring-core" cx="84" cy="84" r="64" />
+        <g class="qr-ticks">
+          <polygon points="84,10 88,18 80,18" />
+          <polygon points="84,158 88,150 80,150" />
+          <polygon points="10,84 18,88 18,80" />
+          <polygon points="158,84 150,88 150,80" />
+        </g>
+        <g transform="translate(54,54)">
+          <rect class="qr-finder" x="0" y="0" width="26" height="26" />
+          <rect class="qr-dot" x="6" y="6" width="14" height="14" />
+          <rect class="qr-finder" x="34" y="0" width="26" height="26" />
+          <rect class="qr-dot" x="40" y="6" width="14" height="14" />
+          <rect class="qr-finder" x="0" y="34" width="26" height="26" />
+          <rect class="qr-dot" x="6" y="40" width="14" height="14" />
+          <rect class="qr-dot" x="40" y="40" width="6" height="6" />
+          <rect class="qr-dot" x="50" y="40" width="6" height="6" />
+          <rect class="qr-dot" x="40" y="50" width="6" height="6" />
+          <rect class="qr-dot" x="34" y="34" width="4" height="4" />
+          <rect class="qr-dot" x="48" y="34" width="6" height="4" />
+          <rect class="qr-dot" x="34" y="48" width="4" height="6" />
+        </g>
+      </svg>
+    </div>
+  `;
+}
+
 function renderHome() {
   return `
     <div class="screen">
       <div class="spacer"></div>
+      ${renderQrOrnament()}
       <div class="title">QRバトル</div>
       <div class="subtitle">QRコードを読み取って自分だけのキャラクターを作り、CPUと対戦しよう。</div>
       <div class="spacer"></div>

@@ -34,6 +34,44 @@ body {
   overflow-x: hidden;
 }
 
+/* --- 常設の上部バー(現在のキャラクターのアバター・名前) --- */
+.identity-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: rgba(201, 162, 74, 0.05);
+  border-bottom: 1px solid rgba(201, 162, 74, 0.25);
+}
+
+.identity-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: linear-gradient(150deg, #3a3f66, #1c2036);
+  border: 1px solid var(--card-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.identity-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.identity-name {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.03em;
+}
+
 #app {
   min-height: 100dvh;
   display: flex;
@@ -62,6 +100,39 @@ body {
   letter-spacing: 0.04em;
   color: var(--accent);
   text-shadow: 0 0 18px rgba(224, 187, 102, 0.35);
+}
+
+/* --- ホーム画面: QRコードの円形装飾フレーム --- */
+.qr-ornament-wrap {
+  display: flex;
+  justify-content: center;
+}
+
+.qr-ring-outer {
+  fill: none;
+  stroke: rgba(201, 162, 74, 0.35);
+  stroke-width: 1;
+  stroke-dasharray: 2 5;
+}
+
+.qr-ring-core {
+  fill: var(--bg-1);
+  stroke: var(--card-border);
+  stroke-width: 1.5;
+}
+
+.qr-ticks {
+  fill: var(--card-border);
+}
+
+.qr-finder {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.qr-dot {
+  fill: var(--accent);
 }
 
 .subtitle {
