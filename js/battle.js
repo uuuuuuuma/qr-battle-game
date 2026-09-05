@@ -58,7 +58,7 @@ function resolveCommand(command, attacker, defender, atkBonus) {
       return { targetsSelf: false, damage, label: 'イビルオーラ' };
     }
     case COMMAND_TYPES.DESTROY:
-      return { targetsSelf: false, damage: Math.round(effAtk * 2), label: 'デストロイ' };
+      return { targetsSelf: false, damage: Math.round(effAtk * 2), label: '終焉の黙示録' };
     case COMMAND_TYPES.MISS:
     default:
       return { targetsSelf: false, damage: 0, label: 'ミス' };

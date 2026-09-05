@@ -30,7 +30,7 @@ const COMMAND_TYPES = {
   TACKLE: 'タックル',
   BLIZZARD: 'ブリザード',
   EVIL_AURA: 'イビルオーラ',
-  DESTROY: 'デストロイ',
+  DESTROY: '終焉の黙示録',
 };
 
 // クリティカル・コンボ・ポイズンは「Sコマンド」。各コマンド表に必ず1つ以上含める
@@ -141,9 +141,9 @@ function generateCharacterFromText(text, name, imageDataUrl) {
 // multiplier は通常CPU比のHP・攻撃力倍率、exclusiveCommand はそのCPU固有のコマンド
 // (コマンド表に必ず1つ出現するよう強制する)
 const QUEST_STAGES = [
-  { name: 'ゴブリン', multiplier: 1, exclusiveCommand: COMMAND_TYPES.TACKLE },
-  { name: 'ウィザード', multiplier: 1.5, exclusiveCommand: COMMAND_TYPES.BLIZZARD },
-  { name: '魔王', multiplier: 2, exclusiveCommand: COMMAND_TYPES.EVIL_AURA, isDemonKing: true },
+  { name: 'ゴブリン', multiplier: 1, exclusiveCommand: COMMAND_TYPES.TACKLE, image: 'images/goblin.jpg' },
+  { name: 'ウィザード', multiplier: 1.5, exclusiveCommand: COMMAND_TYPES.BLIZZARD, image: 'images/wizard.jpg' },
+  { name: '魔王', multiplier: 2, exclusiveCommand: COMMAND_TYPES.EVIL_AURA, isDemonKing: true, image: 'images/maou.jpg' },
 ];
 
 // コマンド表に指定コマンドが無ければ、ランダムな面を強制的にそのコマンドにする
@@ -157,7 +157,7 @@ function forceCommandIntoTable(table, command, randFn) {
 function generateCpuCharacter(stage) {
   const seedText = 'CPU-' + Date.now() + '-' + Math.floor(Math.random() * 1000000);
   const name = stage ? stage.name : 'CPU';
-  const cpu = generateCharacterFromText(seedText, name, null);
+  const cpu = generateCharacterFromText(seedText, name, stage ? stage.image : null);
   cpu.commandTable = cpu.commandTableOptions[Math.floor(Math.random() * cpu.commandTableOptions.length)];
   if (stage && stage.exclusiveCommand) {
     forceCommandIntoTable(cpu.commandTable, stage.exclusiveCommand);

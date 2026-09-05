@@ -360,7 +360,7 @@ function renderHome() {
       <div class="subtitle">QRコードを読み取って自分だけのキャラクターを作り、CPUと対戦しよう。</div>
       <div class="spacer"></div>
       <button class="btn block" id="normalModeBtn">通常バトル</button>
-      <button class="btn secondary block" id="questModeBtn">⚔️ クエストモード(ゴブリン→ウィザード→魔王)</button>
+      <button class="btn secondary block" id="questModeBtn">クエストモード</button>
       <div class="spacer"></div>
     </div>
   `;
@@ -624,6 +624,29 @@ function showCharacterInfoPopup(char) {
   const popupBody = document.getElementById('popupBody');
   bindSkillCardPopupsIn(popupBody, char.skillCardBase);
   if (char.commandTable) bindCommandTablePopups(popupBody);
+}
+
+// QR由来の候補(speedCardBase/skillCardBase)ではなく、実際に選んで使っている
+// コマンド表・スピードカード・スキルカードを表示する(クエスト報酬画面など選択完了後用)
+function showCurrentLoadoutPopup(char) {
+  const avatar = char.image
+    ? `<img class="char-avatar" src="${char.image}" alt="${escapeHtml(char.name)}" />`
+    : `<div class="char-avatar">🧑</div>`;
+  const body = `
+    <div style="display:flex; justify-content:center;">${avatar}</div>
+    <div class="char-name" style="text-align:center; margin-top:8px; font-size:18px;">${escapeHtml(char.name)}</div>
+    <div class="stat-row" style="justify-content:center; gap:16px; margin-top:4px;"><span>HP ${char.maxHp}</span><span>攻撃力 ${char.baseAtk}</span></div>
+    <div class="section-label">コマンド表(長押しで説明)</div>
+    ${renderCommandTable(char.commandTable)}
+    <div class="section-label">スピードカード(10枚)</div>
+    <div class="act-card-grid">${char.speedCards.map((c) => renderSpeedCardFace(c, true)).join('')}</div>
+    <div class="section-label">スキルカード(6枚・長押しで説明)</div>
+    <div class="act-card-grid">${char.skillCards.map((c) => renderSkillCardFace(c, true)).join('')}</div>
+  `;
+  showPopup(`${char.name}の現在の構成`, body);
+  const popupBody = document.getElementById('popupBody');
+  bindSkillCardPopupsIn(popupBody, char.skillCards);
+  bindCommandTablePopups(popupBody);
 }
 
 // 選択画面の上部に「今のキャラ情報」ボタンを設置し、ポップアップで確認できるようにする
@@ -1733,6 +1756,9 @@ function startQuestReward() {
     command: rewardCommand,
     speedCard: rewardSpeedCard,
     skillCard: rewardSkillCard,
+    commandUsed: false, // 報酬は1つにつき1回しか交換できない(重複交換防止)
+    speedUsed: false,
+    skillUsed: false,
   };
   state.screen = 'questReward';
   render();
@@ -1742,29 +1768,39 @@ function renderQuestReward() {
   const r = state.questReward;
   const char = state.playerCharacter;
   const commandFacesHtml = char.commandTable
-    .map((cmd, i) => `<button class="command-cell ${commandCellClass(cmd)}" data-swap-face="${i}"><div class="face">出目 ${i + 1}</div><div class="cmd">${cmd}</div></button>`)
+    .map((cmd, i) => r.commandUsed
+      ? `<div class="command-cell ${commandCellClass(cmd)}"><div class="face">出目 ${i + 1}</div><div class="cmd">${cmd}</div></div>`
+      : `<button class="command-cell ${commandCellClass(cmd)}" data-swap-face="${i}"><div class="face">出目 ${i + 1}</div><div class="cmd">${cmd}</div></button>`)
     .join('');
   const speedCardsHtml = char.speedCards
-    .map((card) => `<button class="act-card speed-card" data-swap-speed-id="${card.id}"><div class="act-card-speed">SPD ${card.speed}</div></button>`)
+    .map((card) => r.speedUsed
+      ? `<div class="act-card speed-card"><div class="act-card-speed">SPD ${card.speed}</div></div>`
+      : `<button class="act-card speed-card" data-swap-speed-id="${card.id}"><div class="act-card-speed">SPD ${card.speed}</div></button>`)
     .join('');
   const skillCardsHtml = char.skillCards
-    .map((card) => `<button class="act-card ${effectClass(card.effectType)}" data-swap-skill-id="${card.id}"><div class="act-card-label">${escapeHtml(card.label)}</div></button>`)
+    .map((card) => r.skillUsed
+      ? `<div class="act-card ${effectClass(card.effectType)}"><div class="act-card-label">${escapeHtml(card.label)}</div></div>`
+      : `<button class="act-card ${effectClass(card.effectType)}" data-swap-skill-id="${card.id}"><div class="act-card-label">${escapeHtml(card.label)}</div></button>`)
     .join('');
   return `
     <div class="screen">
+      <div class="top-bar">
+        <div></div>
+        <button class="icon-btn" id="charInfoBtn">🪪 キャラ情報</button>
+      </div>
       <div class="title" style="font-size:20px;">ステージクリア！</div>
       <div class="subtitle">${escapeHtml(r.defeatedName)}を倒した！ HPが25%回復し、状態異常が治った(ボルテージのみ引き継ぎ)</div>
 
       <div class="quest-reward-section">
-        <div class="section-label">報酬コマンド: どの面と交換しますか？(タップで交換・スキップ可)</div>
+        <div class="section-label">報酬コマンド: どの面と交換しますか？(1つだけ交換可・タップで交換・スキップ可)</div>
         <div class="command-table reward-highlight">
-          <div class="command-cell ${commandCellClass(r.command)}"><div class="face">報酬</div><div class="cmd">${r.command}</div></div>
+          <div class="command-cell ${commandCellClass(r.command)}"><div class="face">${r.commandUsed ? '交換済み' : '報酬'}</div><div class="cmd">${r.command}</div></div>
         </div>
         <div class="command-table">${commandFacesHtml}</div>
       </div>
 
       <div class="quest-reward-section">
-        <div class="section-label">報酬スピードカード: どのカードと交換しますか？(タップで交換・スキップ可)</div>
+        <div class="section-label">報酬スピードカード: どのカードと交換しますか？(1枚だけ交換可・タップで交換・スキップ可)</div>
         <div class="act-card-grid reward-highlight">
           <button class="act-card speed-card" disabled><div class="act-card-speed">SPD ${r.speedCard.speed}</div></button>
         </div>
@@ -1772,7 +1808,7 @@ function renderQuestReward() {
       </div>
 
       <div class="quest-reward-section">
-        <div class="section-label">報酬スキルカード: どのカードと交換しますか？(タップで交換・スキップ可)</div>
+        <div class="section-label">報酬スキルカード: どのカードと交換しますか？(1枚だけ交換可・タップで交換・スキップ可)</div>
         <div class="act-card-grid reward-highlight">
           <button class="act-card ${effectClass(r.skillCard.effectType)}" disabled><div class="act-card-label">${escapeHtml(r.skillCard.label)}</div></button>
         </div>
@@ -1791,26 +1827,33 @@ function bindQuestReward() {
 
   document.querySelectorAll('[data-swap-face]').forEach((btn) => {
     btn.onclick = () => {
+      if (r.commandUsed) return;
       const idx = Number(btn.dataset.swapFace);
       char.commandTable[idx] = r.command;
+      r.commandUsed = true;
       render();
     };
   });
   document.querySelectorAll('[data-swap-speed-id]').forEach((btn) => {
     btn.onclick = () => {
+      if (r.speedUsed) return;
       const idx = char.speedCards.findIndex((c) => c.id === btn.dataset.swapSpeedId);
       if (idx !== -1) char.speedCards[idx] = r.speedCard;
+      r.speedUsed = true;
       render();
     };
   });
   document.querySelectorAll('[data-swap-skill-id]').forEach((btn) => {
     btn.onclick = () => {
+      if (r.skillUsed) return;
       const idx = char.skillCards.findIndex((c) => c.id === btn.dataset.swapSkillId);
       if (idx !== -1) char.skillCards[idx] = r.skillCard;
+      r.skillUsed = true;
       render();
     };
   });
   document.getElementById('nextStageBtn').onclick = proceedToNextQuestStage;
+  document.getElementById('charInfoBtn').onclick = () => showCurrentLoadoutPopup(char);
   bindCommandTablePopups();
   bindSkillCardPopupsIn(document, char.skillCards);
 }
@@ -1894,7 +1937,7 @@ async function resolveRoundEnd(combatDefender) {
 }
 
 // 魔王専用: ラウンド終了時にHPが50%以下なら、「イビルオーラ」未使用なら自動発動し、
-// コマンド表に「デストロイ」が無ければ追加する(どちらも一度発生したら以降は何もしない)
+// コマンド表に「終焉の黙示録」が無ければ追加する(どちらも一度発生したら以降は何もしない)
 function checkDemonKingRage() {
   const cpu = state.battleCpu;
   if (!cpu || !cpu.isDemonKing || cpu.hp <= 0) return;
@@ -1908,7 +1951,7 @@ function checkDemonKingRage() {
   if (!cpu.commandTable.includes(COMMAND_TYPES.DESTROY)) {
     const replaceIdx = Math.floor(Math.random() * cpu.commandTable.length);
     cpu.commandTable[replaceIdx] = COMMAND_TYPES.DESTROY;
-    addLog('👹 魔王のコマンド表に「デストロイ」が追加された！');
+    addLog('👹 魔王のコマンド表に「終焉の黙示録」が追加された！');
   }
 }
 
@@ -2005,7 +2048,7 @@ function renderResult() {
   const questProgress = state.questMode && !questClear
     ? `<div class="quest-progress">⚔️ クエスト進捗: ${state.questStage + 1}/${QUEST_STAGES.length} (${escapeHtml(QUEST_STAGES[state.questStage].name)}で${win ? '勝利' : '敗北'})</div>`
     : '';
-  const title = questClear ? 'クエストクリア！' : win ? 'しょうり！' : 'はいぼく…';
+  const title = questClear ? 'クエストクリア！' : win ? 'Winner' : 'Lose…';
   const subtitle = questClear
     ? `勇者${escapeHtml(state.battlePlayer.name)}は魔王を倒した！`
     : win
