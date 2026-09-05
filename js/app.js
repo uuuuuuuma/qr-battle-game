@@ -1063,6 +1063,7 @@ function bindReady() {
       cpuSkillRevealed: new Set(), // 相手のスキルカードの公開状況(使ったら公開)
       playerActiveFace: null, // このラウンドで発動したコマンドの面(ラウンド終了時にクリア)
       cpuActiveFace: null,
+      attackerSide: null, // このラウンドでサイコロを振る側('player'|'cpu')。そちらのコマンド表を上に表示する
       playerAtkBonus: 0,
       cpuAtkBonus: 0,
       playerGuardMult: null,
@@ -1104,14 +1105,24 @@ function renderBattle() {
         ${renderArenaContent(b)}
       </div>
       ${renderBattleControls(b)}
-      <div class="section-label">あなたのコマンド表(長押しで説明)</div>
-      ${renderCommandTable(state.battlePlayer.commandTable, null, b.playerActiveFace)}
-      <div class="section-label">CPUのコマンド表(使われた面だけ公開・長押しで説明)</div>
-      ${renderCommandTable(state.battleCpu.commandTable, b.cpuRevealed, b.cpuActiveFace)}
       <button class="btn secondary block" id="peekCpuCardsBtn">相手のカード一覧を見る</button>
+      ${renderBattleCommandTables(b)}
       <div class="battle-log">${renderLog(b.log)}</div>
     </div>
   `;
+}
+
+// サイコロを振る側(攻撃側)のコマンド表が上に来るように並べる
+function renderBattleCommandTables(b) {
+  const playerBlock = `
+    <div class="section-label">あなたのコマンド表(長押しで説明)</div>
+    ${renderCommandTable(state.battlePlayer.commandTable, null, b.playerActiveFace)}
+  `;
+  const cpuBlock = `
+    <div class="section-label">CPUのコマンド表(長押しで説明)</div>
+    ${renderCommandTable(state.battleCpu.commandTable, b.cpuRevealed, b.cpuActiveFace)}
+  `;
+  return b.attackerSide === 'cpu' ? cpuBlock + playerBlock : playerBlock + cpuBlock;
 }
 
 // CPUのスピードカード一覧(常に見られる)。捨て札にあるカードは使用済みとしてチェックする
@@ -1430,6 +1441,7 @@ async function onPlayerPlayCards() {
   if (playerEffSpeed === cpuEffSpeed) {
     addLog(`スピード${playerEffSpeed}で同速！ このラウンドはどちらも攻撃できない`);
     b.message = `同速(${playerEffSpeed})…このラウンドは攻撃なし`;
+    b.attackerSide = null;
     await resolveRoundEnd(null);
     return;
   }
@@ -1437,6 +1449,7 @@ async function onPlayerPlayCards() {
   // 「騙し討ち」は片方だけが使った場合にスピードの勝敗を逆転させる(両者が使うと相殺され元通り)
   const reversed = !!b.playerReverse !== !!b.cpuReverse;
   const winnerIsPlayer = reversed ? playerEffSpeed < cpuEffSpeed : playerEffSpeed > cpuEffSpeed;
+  b.attackerSide = winnerIsPlayer ? 'player' : 'cpu';
   b.arenaColor = winnerIsPlayer ? '#239dda' : '#e60012';
   addLog(`スピード勝負: ${winnerIsPlayer ? 'あなた' : 'CPU'}の勝ち！ (${playerEffSpeed} vs ${cpuEffSpeed})${reversed ? '(騙し討ちで逆転)' : ''}`);
   b.message = winnerIsPlayer ? `スピード勝ち！(${playerEffSpeed} vs ${cpuEffSpeed}) あなたの攻撃！` : `スピード負け…(${playerEffSpeed} vs ${cpuEffSpeed}) CPUの攻撃！`;
@@ -1576,6 +1589,7 @@ async function resolveRoundEnd(combatDefender) {
 
   if (combatDefender && combatDefender.hp <= 0) {
     // 通常攻撃で決着した場合は毒処理を行わずそのまま結果へ
+    b.message += ` ${combatDefender.name}は倒れた！`;
     b.awaitingContinue = true;
     render();
     await waitForContinueClick();
@@ -1602,12 +1616,14 @@ async function resolveRoundEnd(combatDefender) {
   await waitForContinueClick();
   b.awaitingContinue = false;
 
-  if (state.battlePlayer.hp <= 0) {
-    endBattle('lose');
-    return;
-  }
-  if (state.battleCpu.hp <= 0) {
-    endBattle('win');
+  if (state.battlePlayer.hp <= 0 || state.battleCpu.hp <= 0) {
+    const defeated = state.battlePlayer.hp <= 0 ? state.battlePlayer : state.battleCpu;
+    b.message = `${defeated.name}は倒れた！`;
+    b.awaitingContinue = true;
+    render();
+    await waitForContinueClick();
+    b.awaitingContinue = false;
+    endBattle(defeated === state.battleCpu ? 'win' : 'lose');
     return;
   }
 
@@ -1634,7 +1650,7 @@ async function runVoltageEvent() {
   const playerRoll = rollDice();
   state.battlePlayer.voltageBonus = (state.battlePlayer.voltageBonus || 0) + playerRoll;
   b.diceValue = playerRoll;
-  b.message = `あなたのボルテージ！ 攻撃力+${playerRoll}(状態異常ではないためヒールでは解除されません)`;
+  b.message = `あなたのボルテージ！ 攻撃力+${playerRoll}`;
   addLog(`⚡ボルテージ: あなたに「ボルテージ+${playerRoll}」が付与された`);
   render();
   await wait(900);
@@ -1642,7 +1658,7 @@ async function runVoltageEvent() {
   const cpuRoll = rollDice();
   state.battleCpu.voltageBonus = (state.battleCpu.voltageBonus || 0) + cpuRoll;
   b.diceValue = cpuRoll;
-  b.message = `CPUのボルテージ！ 攻撃力+${cpuRoll}(状態異常ではないためヒールでは解除されません)`;
+  b.message = `CPUのボルテージ！ 攻撃力+${cpuRoll}`;
   addLog(`⚡ボルテージ: CPUに「ボルテージ+${cpuRoll}」が付与された`);
   render();
   await wait(900);
@@ -1674,6 +1690,7 @@ function advanceToNextRound() {
   b.poisonHitSides = [];
   b.playerActiveFace = null;
   b.cpuActiveFace = null;
+  b.attackerSide = null;
   b.playerAtkBonus = 0;
   b.cpuAtkBonus = 0;
   b.busy = false;
