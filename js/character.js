@@ -161,11 +161,13 @@ function generateSpeedCardBase(text, name) {
     }
   }
 
-  return speeds.map((speed, i) => ({
-    id: `${name}-speed-${i}-${speed}`,
-    speed,
-    isWild: false,
-  })); // 10枚
+  return speeds
+    .map((speed, i) => ({
+      id: `${name}-speed-${i}-${speed}`,
+      speed,
+      isWild: false,
+    }))
+    .sort((a, b) => b.speed - a.speed); // 数値が大きい順に並べる
 }
 
 // ---------- スキルカード生成 ----------
@@ -186,6 +188,9 @@ function generateSkillCardBase(text, name) {
       isWild: false,
     });
   }
+  // 種類順(EFFECT_TYPESの定義順)に並べる
+  const typeOrder = Object.values(EFFECT_TYPES);
+  baseCards.sort((a, b) => typeOrder.indexOf(a.effectType) - typeOrder.indexOf(b.effectType));
   return baseCards; // 6枚
 }
 
