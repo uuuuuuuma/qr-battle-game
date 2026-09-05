@@ -157,7 +157,7 @@ function commandDescription(cmd) {
     case COMMAND_TYPES.HEAL:
       return '攻撃力の0.5倍分、自分のHPを回復します。毒などの状態異常も同時に治します。';
     case COMMAND_TYPES.POISON:
-      return '攻撃力の0.5倍のダメージを与え、50%の確率で相手を毒状態にします。毒状態は毎ラウンド終了時、残りHPの10%のダメージを受けます。(Sコマンド)';
+      return '攻撃力の0.5倍のダメージを与え、50%の確率で相手を毒状態にします。毒状態は毎ラウンド終了時、残りHPの10%(端数切り上げ)のダメージを受けます。2回毒を受けると「猛毒」になり、ダメージ率が20%に上がります。(Sコマンド)';
     case COMMAND_TYPES.COLLAPSE:
       return '相手の最大HPの10%のダメージを与えます。直後にHPが最大の20%以下なら、即座に0になります。';
     case COMMAND_TYPES.LEG_SWEEP:
@@ -189,7 +189,10 @@ function showCharacterEffectsPopup(character) {
     lines.push(`🗡️ 刀狩りを受けた影響: 攻撃力が永続で${character.baseAtk}→${character.atk}に低下しています`);
   }
   if (character.poisoned) {
-    lines.push('🧪 毒状態: ラウンド終了時に残りHPの10%のダメージを受けます');
+    const severe = (character.poisonStacks || 0) >= 2;
+    lines.push(severe
+      ? '☠️ 猛毒状態: ラウンド終了時に残りHPの20%(端数切り上げ)のダメージを受けます'
+      : '🧪 毒状態: ラウンド終了時に残りHPの10%(端数切り上げ)のダメージを受けます');
   }
   const body = lines.length > 0
     ? lines.map((l) => `<div>${escapeHtml(l)}</div>`).join('')
@@ -766,7 +769,12 @@ function bindSelectSkillCards() {
 
 function renderStatusBadges(char) {
   const badges = [];
-  if (char.poisoned) badges.push('<span class="status-badge poison">🧪毒</span>');
+  if (char.poisoned) {
+    const severe = (char.poisonStacks || 0) >= 2;
+    badges.push(severe
+      ? '<span class="status-badge poison severe">☠️猛毒</span>'
+      : '<span class="status-badge poison">🧪毒</span>');
+  }
   const speedBonus = char.permanentSpeedBonus || 0;
   if (speedBonus > 0) badges.push(`<span class="status-badge accel">⚡+${speedBonus}</span>`);
   else if (speedBonus < 0) badges.push(`<span class="status-badge slow">🦵${speedBonus}</span>`);
@@ -1010,7 +1018,8 @@ function bindReady() {
       awaitingDiceRoll: false,
       showPlayerTable: false,
       showCpuTable: false,
-      cpuRevealed: new Set(),
+      cpuRevealed: new Set(), // コマンド表(出目)の公開状況
+      cpuSkillRevealed: new Set(), // 相手のスキルカードの公開状況(使ったら公開)
       playerAtkBonus: 0,
       cpuAtkBonus: 0,
       playerGuardMult: null,
@@ -1058,9 +1067,53 @@ function renderBattle() {
       </div>
       ${b.showPlayerTable ? `<div class="section-label">あなたのコマンド表(長押しで説明)</div>${renderCommandTable(state.battlePlayer.commandTable)}` : ''}
       ${b.showCpuTable ? `<div class="section-label">CPUのコマンド表(使われた面だけ公開・長押しで説明)</div>${renderCommandTable(state.battleCpu.commandTable, b.cpuRevealed)}` : ''}
+      <div class="table-toggle-row">
+        <button class="btn secondary" id="peekCpuSpeedBtn">相手のスピードカードを見る</button>
+        <button class="btn secondary" id="peekCpuSkillBtn">相手のスキルカードを見る</button>
+      </div>
       <div class="battle-log">${renderLog(b.log)}</div>
     </div>
   `;
+}
+
+// CPUのスピードカード一覧(常に見られる)。捨て札にあるカードは使用済みとしてチェックする
+function buildOpponentSpeedCardsPopupBody() {
+  const cards = state.battleCpu.speedCards;
+  const discardIds = new Set(state.cpuSpeedDeck.discard.map((c) => c.id));
+  const cellsHtml = cards
+    .map((card) => {
+      const used = discardIds.has(card.id);
+      return `
+        <div class="peek-cell speed-card ${used ? 'discarded' : ''}">
+          <div class="act-card-speed">SPD ${card.speed}</div>
+          ${used ? '<div class="peek-check">✔ 使用済み</div>' : ''}
+        </div>
+      `;
+    })
+    .join('');
+  return `<div class="peek-grid">${cellsHtml}</div>`;
+}
+
+// CPUのスキルカード一覧。使ったことがあるものだけ公開され、捨て札にあれば使用済みとしてチェックする
+function buildOpponentSkillCardsPopupBody() {
+  const cards = state.battleCpu.skillCards;
+  const discardIds = new Set(state.cpuSkillDeck.discard.map((c) => c.id));
+  const revealed = state.battle.cpuSkillRevealed;
+  const cellsHtml = cards
+    .map((card) => {
+      if (!revealed.has(card.id)) {
+        return `<div class="peek-cell hidden"><div class="act-card-label">？</div></div>`;
+      }
+      const used = discardIds.has(card.id);
+      return `
+        <div class="peek-cell ${effectClass(card.effectType)} ${used ? 'discarded' : ''}">
+          <div class="act-card-label">${escapeHtml(card.label)}</div>
+          ${used ? '<div class="peek-check">✔ 使用済み</div>' : ''}
+        </div>
+      `;
+    })
+    .join('');
+  return `<div class="peek-grid">${cellsHtml}</div>`;
 }
 
 function renderBattleControls(b) {
@@ -1195,6 +1248,14 @@ function initBattle() {
       render();
     };
   }
+  const peekCpuSpeedBtn = document.getElementById('peekCpuSpeedBtn');
+  if (peekCpuSpeedBtn) {
+    peekCpuSpeedBtn.onclick = () => showPopup('CPUのスピードカード', buildOpponentSpeedCardsPopupBody());
+  }
+  const peekCpuSkillBtn = document.getElementById('peekCpuSkillBtn');
+  if (peekCpuSkillBtn) {
+    peekCpuSkillBtn.onclick = () => showPopup('CPUのスキルカード(使ったものだけ公開・✔は使用済み)', buildOpponentSkillCardsPopupBody());
+  }
   bindCommandTablePopups();
   bindVsCharacterPopups(document, state.battlePlayer, state.battleCpu);
 }
@@ -1307,6 +1368,7 @@ async function onPlayerPlayCards() {
   if (state.cpuSkillDeck.hand.length > 0 && Math.random() < 0.6) {
     const cpuSkillPick = pickCpuCard(state.cpuSkillDeck);
     cpuSkillCard = playCard(state.cpuSkillDeck, cpuSkillPick.id);
+    b.cpuSkillRevealed.add(cpuSkillCard.id);
   }
   b.cpuSpeedCard = cpuSpeedCard;
   b.cpuSkillCard = cpuSkillCard;
@@ -1409,6 +1471,7 @@ async function onPlayerPlayCards() {
     resultText = `「${result.label}」！ HPを${healed}回復！`;
     if (result.curesStatus && attacker.poisoned) {
       attacker.poisoned = false;
+      attacker.poisonStacks = 0;
       resultText += ' 毒も治った！';
     }
   } else if (command === COMMAND_TYPES.MISS) {
@@ -1431,7 +1494,8 @@ async function onPlayerPlayCards() {
 
     if (command === COMMAND_TYPES.POISON && result.poison && defender.hp > 0) {
       defender.poisoned = true;
-      resultText += ' 相手は毒状態になった！';
+      defender.poisonStacks = (defender.poisonStacks || 0) + 1;
+      resultText += defender.poisonStacks >= 2 ? ' 相手は猛毒状態になった！' : ' 相手は毒状態になった！';
     }
 
     if (command === COMMAND_TYPES.COLLAPSE && defender.hp > 0 && defender.hp <= defender.maxHp * 0.2) {
@@ -1456,10 +1520,12 @@ async function onPlayerPlayCards() {
   await resolveRoundEnd(hitDefender ? defender : null);
 }
 
-// 毒状態のキャラクターに、残りHPの10%のダメージを与える。与えたダメージ量を返す(0なら毒なし/対象外)
+// 毒状態のキャラクターにダメージを与える(端数切り上げ)。2回以上毒を受けていれば「猛毒」で20%、それ以外は10%。
+// 与えたダメージ量を返す(0なら毒なし/対象外)
 function tickPoison(character) {
   if (!character.poisoned || character.hp <= 0) return 0;
-  const dmg = Math.round(character.hp * 0.1);
+  const rate = (character.poisonStacks || 0) >= 2 ? 0.2 : 0.1;
+  const dmg = Math.ceil(character.hp * rate);
   if (dmg <= 0) return 0;
   character.hp = Math.max(0, character.hp - dmg);
   return dmg;

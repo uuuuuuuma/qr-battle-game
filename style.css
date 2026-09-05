@@ -348,6 +348,11 @@ body {
   color: #b79bff;
 }
 
+.status-badge.poison.severe {
+  background: rgba(255, 82, 82, 0.2);
+  color: #ff5252;
+}
+
 .status-badge.accel {
   background: rgba(255, 209, 102, 0.18);
   color: #ffd166;
@@ -926,4 +931,57 @@ canvas.hidden-canvas {
   transform: translateX(-50%) rotate(-8deg);
   font-size: 56px;
   filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.4));
+}
+
+/* --- 相手のカード一覧ポップアップ --- */
+.peek-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.peek-cell {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  padding: 10px 4px;
+  text-align: center;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.peek-cell .act-card-speed {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.peek-cell .act-card-label {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.peek-cell.effect-charge .act-card-label { color: #ff9f40; }
+.peek-cell.effect-guard .act-card-label { color: #4dd4a3; }
+.peek-cell.effect-accel .act-card-label { color: #ffd166; }
+.peek-cell.effect-agile .act-card-label { color: #6c8cff; }
+
+.peek-cell.hidden {
+  opacity: 0.55;
+}
+
+.peek-cell.hidden .act-card-label {
+  color: var(--text-dim);
+}
+
+.peek-cell.discarded {
+  opacity: 0.5;
+  border-style: dashed;
+}
+
+.peek-check {
+  margin-top: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--success);
 }

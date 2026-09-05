@@ -122,6 +122,7 @@ function generateCharacterFromText(text, name, imageDataUrl) {
     comboMultiplier: 1, // 「コンボ」を使うたびに+0.3され、ゲーム終了まで持続する
     permanentSpeedBonus: 0, // 「アクセル」を使うたびに+1され、ゲーム終了まで持続する
     poisoned: false,
+    poisonStacks: 0, // 毒を受けた回数。2以上で「猛毒」(ダメージ率が上がる)になる
     image: imageDataUrl || null,
     sourceText: text,
   };
