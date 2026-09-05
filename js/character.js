@@ -137,8 +137,11 @@ function generateCpuCharacter() {
   const wildSet = generateWildcardSet('CPU', 0); // CPUは1セットだけ生成してそのまま使う
   cpu.speedCardPool = cpu.speedCardBase.concat(wildSet.speedWilds);
   cpu.skillCardPool = cpu.skillCardBase.concat(wildSet.skillWilds);
-  cpu.speedCards = shuffleArray(cpu.speedCardPool).slice(0, 10); // CPUはランダムに10枚選ぶ
-  cpu.skillCards = shuffleArray(cpu.skillCardPool).slice(0, 6); // CPUはランダムに6枚選ぶ
+  // どのカードが選ばれるかはランダムだが、一覧の表示順はプレイヤー側と同じ並び順に揃える
+  const typeOrder = Object.values(EFFECT_TYPES);
+  cpu.speedCards = shuffleArray(cpu.speedCardPool).slice(0, 10).sort((a, b) => b.speed - a.speed); // CPUはランダムに10枚選ぶ
+  cpu.skillCards = shuffleArray(cpu.skillCardPool).slice(0, 6)
+    .sort((a, b) => typeOrder.indexOf(a.effectType) - typeOrder.indexOf(b.effectType)); // CPUはランダムに6枚選ぶ
   return cpu;
 }
 
