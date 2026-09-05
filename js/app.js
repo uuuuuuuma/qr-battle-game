@@ -19,6 +19,10 @@ const state = {
   cpuSkillDeck: null,
   battle: null,
   battleResult: null,
+  questMode: false, // クエストモード(ゴブリン→ウィザード→魔王)かどうか
+  questStage: 0, // QUEST_STAGES のインデックス
+  questReward: null, // ステージクリア後の報酬(コマンド/スピードカード/スキルカードを1つずつ)
+  questCarry: null, // 次ステージへ引き継ぐHP・ボルテージ
 };
 
 let currentStream = null;
@@ -171,6 +175,14 @@ function commandDescription(cmd) {
       return '攻撃力の0.5倍のダメージを与え、相手のスピードを永続で-0.5します(このバトル中永続・重ねがけ可能)。';
     case COMMAND_TYPES.SWORD_HUNT:
       return '攻撃力の0.5倍のダメージを与え、相手の攻撃力を永続で-2します(このバトル中永続・重ねがけ可能)。';
+    case COMMAND_TYPES.TACKLE:
+      return '攻撃力の1.5倍のダメージを与えます。(ゴブリン専用コマンド)';
+    case COMMAND_TYPES.BLIZZARD:
+      return '攻撃力の1.5倍のダメージを与え、次のラウンド中、相手はスキルカードを使えなくなります。(ウィザード専用コマンド)';
+    case COMMAND_TYPES.EVIL_AURA:
+      return '自分の攻撃力を永続で2倍にし、その攻撃力でクリティカル(2倍)のダメージを与えます。(魔王専用コマンド)';
+    case COMMAND_TYPES.DESTROY:
+      return '攻撃力の2倍のダメージを与えます。(魔王専用コマンド・ゲーム開始時には出現しません)';
     default:
       return '';
   }
@@ -197,6 +209,9 @@ function showCharacterEffectsPopup(character) {
   }
   if ((character.voltageBonus || 0) > 0) {
     lines.push(`🔋 ボルテージ: 攻撃力(とヒール量)が+${character.voltageBonus}されています(状態異常ではないためヒールでは解除されません)`);
+  }
+  if ((character.skillLockRounds || 0) > 0) {
+    lines.push('🥶 ブリザードの影響でスキルカードが使えません');
   }
   if (character.poisoned) {
     const severe = (character.poisonStacks || 0) >= 2;
@@ -272,6 +287,10 @@ function render() {
       app.innerHTML = renderBattle();
       initBattle();
       break;
+    case 'questReward':
+      app.innerHTML = renderQuestReward();
+      bindQuestReward();
+      break;
     case 'result':
       app.innerHTML = renderResult();
       bindResult();
@@ -288,14 +307,23 @@ function renderHome() {
       <div class="title">QRバトル</div>
       <div class="subtitle">QRコードを読み取って自分だけのキャラクターを作り、CPUと対戦しよう。</div>
       <div class="spacer"></div>
-      <button class="btn block" id="startBtn">QRコードでキャラをつくる</button>
+      <button class="btn block" id="normalModeBtn">通常バトル</button>
+      <button class="btn secondary block" id="questModeBtn">⚔️ クエストモード(ゴブリン→ウィザード→魔王)</button>
       <div class="spacer"></div>
     </div>
   `;
 }
 
 function bindHome() {
-  document.getElementById('startBtn').onclick = () => {
+  document.getElementById('normalModeBtn').onclick = () => {
+    state.questMode = false;
+    state.questStage = 0;
+    state.screen = 'scanQr';
+    render();
+  };
+  document.getElementById('questModeBtn').onclick = () => {
+    state.questMode = true;
+    state.questStage = 0;
     state.screen = 'scanQr';
     render();
   };
@@ -838,7 +866,9 @@ function bindSelectSkillCards() {
       state.editingFromReady = false;
       state.screen = 'ready';
     } else {
-      state.cpuCharacter = generateCpuCharacter();
+      state.cpuCharacter = state.questMode
+        ? generateCpuCharacter(QUEST_STAGES[state.questStage])
+        : generateCpuCharacter();
       state.screen = 'ready';
     }
     render();
@@ -909,6 +939,23 @@ function bindVsCharacterPopups(root, playerChar, cpuChar) {
   if (cpuEl) bindCharacterEffectsPopup(cpuEl, cpuChar);
 }
 
+function commandCellClass(cmd) {
+  switch (cmd) {
+    case COMMAND_TYPES.ATTACK: return 'attack';
+    case COMMAND_TYPES.CRITICAL: return 'critical';
+    case COMMAND_TYPES.GUARD_STRIKE: return 'guard';
+    case COMMAND_TYPES.COMBO: return 'combo';
+    case COMMAND_TYPES.HEAL: return 'heal';
+    case COMMAND_TYPES.POISON: return 'poison';
+    case COMMAND_TYPES.COLLAPSE: return 'collapse';
+    case COMMAND_TYPES.TACKLE: return 'tackle';
+    case COMMAND_TYPES.BLIZZARD: return 'blizzard';
+    case COMMAND_TYPES.EVIL_AURA: return 'evil-aura';
+    case COMMAND_TYPES.DESTROY: return 'destroy';
+    default: return 'miss';
+  }
+}
+
 // revealed を渡すと、そのインデックス(出目-1)が含まれていない面は「？」で伏せて表示する。
 // activeIndex を渡すと、そのインデックスの面を「発動した」として色反転表示する(ラウンド終了時にクリアされる)
 function renderCommandTable(table, revealed, activeIndex) {
@@ -917,14 +964,7 @@ function renderCommandTable(table, revealed, activeIndex) {
       if (revealed && !revealed.has(i)) {
         return `<div class="command-cell hidden"><div class="face">出目 ${i + 1}</div><div class="cmd">？</div></div>`;
       }
-      let cls = 'miss';
-      if (cmd === COMMAND_TYPES.ATTACK) cls = 'attack';
-      else if (cmd === COMMAND_TYPES.CRITICAL) cls = 'critical';
-      else if (cmd === COMMAND_TYPES.GUARD_STRIKE) cls = 'guard';
-      else if (cmd === COMMAND_TYPES.COMBO) cls = 'combo';
-      else if (cmd === COMMAND_TYPES.HEAL) cls = 'heal';
-      else if (cmd === COMMAND_TYPES.POISON) cls = 'poison';
-      else if (cmd === COMMAND_TYPES.COLLAPSE) cls = 'collapse';
+      const cls = commandCellClass(cmd);
       const sCls = isSCommand(cmd) ? ' s-command' : '';
       const activeCls = activeIndex === i ? ' active' : '';
       return `<div class="command-cell ${cls}${sCls}${activeCls}" data-command="${escapeHtml(cmd)}"><div class="face">出目 ${i + 1}</div><div class="cmd">${cmd}</div></div>`;
@@ -992,9 +1032,13 @@ function renderCardBack(small) {
 // ---------- 準備(Ready?)画面 ----------
 
 function renderReady() {
+  const questBadge = state.questMode
+    ? `<div class="quest-progress">⚔️ クエストモード ${state.questStage + 1}/${QUEST_STAGES.length}: ${escapeHtml(QUEST_STAGES[state.questStage].name)}</div>`
+    : '';
   return `
     <div class="screen">
       <div class="title" style="text-align:center;">Ready?</div>
+      ${questBadge}
       <div class="vs-arena">
         ${renderVsCharacterCard(state.playerCharacter, false, 'player')}
         <div class="vs-label">VS</div>
@@ -1042,50 +1086,56 @@ function bindReady() {
     state.playerSkillDeck = createDeckState(state.playerCharacter.skillCards);
     state.cpuSpeedDeck = createDeckState(state.battleCpu.speedCards);
     state.cpuSkillDeck = createDeckState(state.battleCpu.skillCards);
-    state.battle = {
-      log: [`バトル開始！ ${state.battlePlayer.name} VS ${state.battleCpu.name}`],
-      playerSpeedCard: null,
-      cpuSpeedCard: null,
-      playerSkillCard: null,
-      cpuSkillCard: null,
-      selectedSpeedCardId: null,
-      selectedSkillCardId: null,
-      playerEffSpeed: null,
-      cpuEffSpeed: null,
-      diceValue: null,
-      message: '',
-      round: 1,
-      busy: false,
-      arenaColor: null,
-      awaitingContinue: false,
-      awaitingDiceRoll: false,
-      cpuRevealed: new Set(), // コマンド表(出目)の公開状況
-      cpuSkillRevealed: new Set(), // 相手のスキルカードの公開状況(使ったら公開)
-      playerActiveFace: null, // このラウンドで発動したコマンドの面(ラウンド終了時にクリア)
-      cpuActiveFace: null,
-      attackerSide: null, // このラウンドでサイコロを振る側('player'|'cpu')。そちらのコマンド表を上に表示する
-      playerAtkBonus: 0,
-      cpuAtkBonus: 0,
-      playerGuardMult: null,
-      cpuGuardMult: null,
-      playerSpeedDelta: 0,
-      cpuSpeedDelta: 0,
-      playerAccel: false,
-      cpuAccel: false,
-      playerReverse: false,
-      cpuReverse: false,
-      playerChoiceFace: null,
-      cpuChoiceFace: null,
-      commandEffect: null,
-      poisonMessages: [],
-      poisonHitSides: [],
-    };
+    state.battle = createInitialBattleState();
     state.screen = 'battle';
     render();
   };
   bindCommandTablePopups();
   bindSkillCardPopupsIn(document, state.playerCharacter.skillCards);
   bindVsCharacterPopups(document, state.playerCharacter, state.cpuCharacter);
+}
+
+// battle画面の初期状態。通常の「たたかう！」ボタンと、クエストモードの次ステージ開始
+// (proceedToNextQuestStage)の両方から使う
+function createInitialBattleState() {
+  return {
+    log: [`バトル開始！ ${state.battlePlayer.name} VS ${state.battleCpu.name}`],
+    playerSpeedCard: null,
+    cpuSpeedCard: null,
+    playerSkillCard: null,
+    cpuSkillCard: null,
+    selectedSpeedCardId: null,
+    selectedSkillCardId: null,
+    playerEffSpeed: null,
+    cpuEffSpeed: null,
+    diceValue: null,
+    message: '',
+    round: 1,
+    busy: false,
+    arenaColor: null,
+    awaitingContinue: false,
+    awaitingDiceRoll: false,
+    cpuRevealed: new Set(), // コマンド表(出目)の公開状況
+    cpuSkillRevealed: new Set(), // 相手のスキルカードの公開状況(使ったら公開)
+    playerActiveFace: null, // このラウンドで発動したコマンドの面(ラウンド終了時にクリア)
+    cpuActiveFace: null,
+    attackerSide: null, // このラウンドでサイコロを振る側('player'|'cpu')。そちらのコマンド表を上に表示する
+    playerAtkBonus: 0,
+    cpuAtkBonus: 0,
+    playerGuardMult: null,
+    cpuGuardMult: null,
+    playerSpeedDelta: 0,
+    cpuSpeedDelta: 0,
+    playerAccel: false,
+    cpuAccel: false,
+    playerReverse: false,
+    cpuReverse: false,
+    playerChoiceFace: null,
+    cpuChoiceFace: null,
+    commandEffect: null,
+    poisonMessages: [],
+    poisonHitSides: [],
+  };
 }
 
 // ---------- バトル画面 ----------
@@ -1237,18 +1287,22 @@ function renderArenaContent(b) {
 
 function renderRoundCardPicker(b) {
   const speedHand = state.playerSpeedDeck.hand;
-  const skillHand = state.playerSkillDeck.hand;
   const speedHtml = speedHand
     .map((card) => `<button class="act-card speed-card ${b.selectedSpeedCardId === card.id ? 'selected' : ''}" data-speed-card-id="${card.id}"><div class="act-card-speed">SPD ${card.speed}</div></button>`)
     .join('');
-  const skillHtml = skillHand
-    .map((card) => `<button class="act-card ${effectClass(card.effectType)} ${b.selectedSkillCardId === card.id ? 'selected' : ''}" data-skill-card-id="${card.id}"><div class="act-card-label">${escapeHtml(card.label)}</div></button>`)
-    .join('');
+  const skillLocked = (state.battlePlayer.skillLockRounds || 0) > 0;
+  const skillSection = skillLocked
+    ? `<div class="section-label">スキルカード</div><div class="skill-locked-note">🥶 ブリザードの影響でこのラウンドはスキルカードを使えません</div>`
+    : `
+      <div class="section-label">スキルカード(任意・タップで選択/解除・長押しで説明)</div>
+      <div class="card-hand-row skill-pick">${state.playerSkillDeck.hand
+        .map((card) => `<button class="act-card ${effectClass(card.effectType)} ${b.selectedSkillCardId === card.id ? 'selected' : ''}" data-skill-card-id="${card.id}"><div class="act-card-label">${escapeHtml(card.label)}</div></button>`)
+        .join('')}</div>
+    `;
   return `
     <div class="section-label">スピードカード(1枚必須)</div>
     <div class="card-hand-row speed-pick">${speedHtml}</div>
-    <div class="section-label">スキルカード(任意・タップで選択/解除・長押しで説明)</div>
-    <div class="card-hand-row skill-pick">${skillHtml}</div>
+    ${skillSection}
     <div class="deck-count">スピード 山札${state.playerSpeedDeck.deck.length}・捨て札${state.playerSpeedDeck.discard.length} ｜ スキル 山札${state.playerSkillDeck.deck.length}・捨て札${state.playerSkillDeck.discard.length}</div>
     <button class="btn block" id="playCardsBtn" ${b.selectedSpeedCardId ? '' : 'disabled'}>カードを出す</button>
   `;
@@ -1377,8 +1431,9 @@ async function onPlayerPlayCards() {
   b.playerEffSpeed = null;
   b.cpuEffSpeed = null;
 
+  const playerSkillLocked = (state.battlePlayer.skillLockRounds || 0) > 0;
   const playerSpeedCard = playCard(state.playerSpeedDeck, b.selectedSpeedCardId);
-  const playerSkillCard = b.selectedSkillCardId ? playCard(state.playerSkillDeck, b.selectedSkillCardId) : null;
+  const playerSkillCard = (!playerSkillLocked && b.selectedSkillCardId) ? playCard(state.playerSkillDeck, b.selectedSkillCardId) : null;
   b.selectedSpeedCardId = null;
   b.selectedSkillCardId = null;
 
@@ -1395,7 +1450,8 @@ async function onPlayerPlayCards() {
   const cpuSpeedHandCard = pickCpuCard(state.cpuSpeedDeck);
   const cpuSpeedCard = playCard(state.cpuSpeedDeck, cpuSpeedHandCard.id);
   let cpuSkillCard = null;
-  if (state.cpuSkillDeck.hand.length > 0 && Math.random() < 0.6) {
+  const cpuSkillLocked = (state.battleCpu.skillLockRounds || 0) > 0;
+  if (!cpuSkillLocked && state.cpuSkillDeck.hand.length > 0 && Math.random() < 0.6) {
     const cpuSkillPick = pickCpuCard(state.cpuSkillDeck);
     cpuSkillCard = playCard(state.cpuSkillDeck, cpuSkillPick.id);
     b.cpuSkillRevealed.add(cpuSkillCard.id);
@@ -1556,6 +1612,11 @@ async function onPlayerPlayCards() {
       defender.atk = Math.max(1, defender.atk - result.atkPenalty);
       resultText += ` 相手の攻撃力が永続で-${result.atkPenalty}された！`;
     }
+
+    if (command === COMMAND_TYPES.BLIZZARD && result.skillLock && defender.hp > 0) {
+      defender.skillLockRounds = 2; // advanceToNextRound で毎ラウンド-1。次の1ラウンドだけ使用不可にする
+      resultText += ' 相手は次のラウンド、スキルカードが使えなくなった！';
+    }
   }
 
   addLog(`${attackerLabel}: 出目${dice} → ${resultText}`);
@@ -1576,8 +1637,150 @@ function tickPoison(character) {
 }
 
 function endBattle(result) {
-  state.battleResult = result;
+  if (state.questMode && result === 'win' && state.questStage < QUEST_STAGES.length - 1) {
+    startQuestReward();
+    return;
+  }
+  state.battleResult = state.questMode && result === 'win' ? 'questClear' : result;
   state.screen = 'result';
+  render();
+}
+
+// ---------- クエストモード: ステージクリア報酬画面 ----------
+
+// 完全ランダム(QRに依存しないMath.random)なコマンド・スピードカード・スキルカードを
+// 1つずつ生成し、現在のセットと交換できるようにする
+function startQuestReward() {
+  const heal = Math.round(state.battlePlayer.maxHp * 0.25);
+  state.questCarry = {
+    hp: Math.min(state.battlePlayer.maxHp, state.battlePlayer.hp + heal),
+    voltageBonus: state.battlePlayer.voltageBonus || 0,
+  };
+
+  const rewardCommandPool = Object.values(COMMAND_TYPES).filter(
+    (c) => ![COMMAND_TYPES.TACKLE, COMMAND_TYPES.BLIZZARD, COMMAND_TYPES.EVIL_AURA, COMMAND_TYPES.DESTROY].includes(c)
+  );
+  const rewardCommand = rewardCommandPool[Math.floor(Math.random() * rewardCommandPool.length)];
+  const rewardSpeedCard = {
+    id: 'reward-speed-' + Date.now(),
+    speed: 1 + Math.floor(Math.random() * 10),
+    isWild: true,
+  };
+  const rewardEffectType = pickSkillEffectType(Math.random);
+  const rewardN = rollSkillN(Math.random, rewardEffectType);
+  const rewardSkillCard = {
+    id: 'reward-skill-' + Date.now(),
+    effectType: rewardEffectType,
+    n: rewardN,
+    label: formatSkillLabel(rewardEffectType, rewardN),
+    isWild: true,
+  };
+
+  state.questReward = {
+    defeatedName: state.battleCpu.name,
+    command: rewardCommand,
+    speedCard: rewardSpeedCard,
+    skillCard: rewardSkillCard,
+  };
+  state.screen = 'questReward';
+  render();
+}
+
+function renderQuestReward() {
+  const r = state.questReward;
+  const char = state.playerCharacter;
+  const commandFacesHtml = char.commandTable
+    .map((cmd, i) => `<button class="command-cell ${commandCellClass(cmd)}" data-swap-face="${i}"><div class="face">出目 ${i + 1}</div><div class="cmd">${cmd}</div></button>`)
+    .join('');
+  const speedCardsHtml = char.speedCards
+    .map((card) => `<button class="act-card speed-card" data-swap-speed-id="${card.id}"><div class="act-card-speed">SPD ${card.speed}</div></button>`)
+    .join('');
+  const skillCardsHtml = char.skillCards
+    .map((card) => `<button class="act-card ${effectClass(card.effectType)}" data-swap-skill-id="${card.id}"><div class="act-card-label">${escapeHtml(card.label)}</div></button>`)
+    .join('');
+  return `
+    <div class="screen">
+      <div class="title" style="font-size:20px;">ステージクリア！</div>
+      <div class="subtitle">${escapeHtml(r.defeatedName)}を倒した！ HPが25%回復し、状態異常が治った(ボルテージのみ引き継ぎ)</div>
+
+      <div class="quest-reward-section">
+        <div class="section-label">報酬コマンド: どの面と交換しますか？(タップで交換・スキップ可)</div>
+        <div class="command-table reward-highlight">
+          <div class="command-cell ${commandCellClass(r.command)}"><div class="face">報酬</div><div class="cmd">${r.command}</div></div>
+        </div>
+        <div class="command-table">${commandFacesHtml}</div>
+      </div>
+
+      <div class="quest-reward-section">
+        <div class="section-label">報酬スピードカード: どのカードと交換しますか？(タップで交換・スキップ可)</div>
+        <div class="act-card-grid reward-highlight">
+          <button class="act-card speed-card" disabled><div class="act-card-speed">SPD ${r.speedCard.speed}</div></button>
+        </div>
+        <div class="act-card-grid">${speedCardsHtml}</div>
+      </div>
+
+      <div class="quest-reward-section">
+        <div class="section-label">報酬スキルカード: どのカードと交換しますか？(タップで交換・スキップ可)</div>
+        <div class="act-card-grid reward-highlight">
+          <button class="act-card ${effectClass(r.skillCard.effectType)}" disabled><div class="act-card-label">${escapeHtml(r.skillCard.label)}</div></button>
+        </div>
+        <div class="act-card-grid">${skillCardsHtml}</div>
+      </div>
+
+      <div class="spacer"></div>
+      <button class="btn block" id="nextStageBtn">つぎの敵へ</button>
+    </div>
+  `;
+}
+
+function bindQuestReward() {
+  const char = state.playerCharacter;
+  const r = state.questReward;
+
+  document.querySelectorAll('[data-swap-face]').forEach((btn) => {
+    btn.onclick = () => {
+      const idx = Number(btn.dataset.swapFace);
+      char.commandTable[idx] = r.command;
+      render();
+    };
+  });
+  document.querySelectorAll('[data-swap-speed-id]').forEach((btn) => {
+    btn.onclick = () => {
+      const idx = char.speedCards.findIndex((c) => c.id === btn.dataset.swapSpeedId);
+      if (idx !== -1) char.speedCards[idx] = r.speedCard;
+      render();
+    };
+  });
+  document.querySelectorAll('[data-swap-skill-id]').forEach((btn) => {
+    btn.onclick = () => {
+      const idx = char.skillCards.findIndex((c) => c.id === btn.dataset.swapSkillId);
+      if (idx !== -1) char.skillCards[idx] = r.skillCard;
+      render();
+    };
+  });
+  document.getElementById('nextStageBtn').onclick = proceedToNextQuestStage;
+  bindCommandTablePopups();
+  bindSkillCardPopupsIn(document, char.skillCards);
+}
+
+function proceedToNextQuestStage() {
+  state.questStage += 1;
+  const stage = QUEST_STAGES[state.questStage];
+  state.cpuCharacter = generateCpuCharacter(stage);
+  state.battlePlayer = {
+    ...state.playerCharacter,
+    hp: state.questCarry.hp,
+    voltageBonus: state.questCarry.voltageBonus,
+  };
+  state.battleCpu = { ...state.cpuCharacter };
+  state.playerSpeedDeck = createDeckState(state.playerCharacter.speedCards);
+  state.playerSkillDeck = createDeckState(state.playerCharacter.skillCards);
+  state.cpuSpeedDeck = createDeckState(state.battleCpu.speedCards);
+  state.cpuSkillDeck = createDeckState(state.battleCpu.skillCards);
+  state.battle = createInitialBattleState();
+  state.questReward = null;
+  state.questCarry = null;
+  state.screen = 'battle';
   render();
 }
 
@@ -1627,11 +1830,34 @@ async function resolveRoundEnd(combatDefender) {
     return;
   }
 
+  if (state.questMode) {
+    checkDemonKingRage();
+  }
+
   if (b.round % 5 === 0) {
     await runVoltageEvent();
   }
 
   advanceToNextRound();
+}
+
+// 魔王専用: ラウンド終了時にHPが50%以下なら、「イビルオーラ」未使用なら自動発動し、
+// コマンド表に「デストロイ」が無ければ追加する(どちらも一度発生したら以降は何もしない)
+function checkDemonKingRage() {
+  const cpu = state.battleCpu;
+  if (!cpu || !cpu.isDemonKing || cpu.hp <= 0) return;
+  if (cpu.hp > cpu.maxHp * 0.5) return;
+
+  if (!cpu.usedEvilAura) {
+    cpu.atk = Math.round(cpu.atk * 2);
+    cpu.usedEvilAura = true;
+    addLog('👹 魔王のHPが50%以下になり、「イビルオーラ」が自動発動！ 攻撃力が2倍になった！');
+  }
+  if (!cpu.commandTable.includes(COMMAND_TYPES.DESTROY)) {
+    const replaceIdx = Math.floor(Math.random() * cpu.commandTable.length);
+    cpu.commandTable[replaceIdx] = COMMAND_TYPES.DESTROY;
+    addLog('👹 魔王のコマンド表に「デストロイ」が追加された！');
+  }
 }
 
 // 5ラウンドごとに発生する「ボルテージ」。お互いサイコロを振り、出目の数だけ攻撃力が永続上昇する。
@@ -1693,6 +1919,8 @@ function advanceToNextRound() {
   b.attackerSide = null;
   b.playerAtkBonus = 0;
   b.cpuAtkBonus = 0;
+  if (state.battlePlayer.skillLockRounds > 0) state.battlePlayer.skillLockRounds -= 1;
+  if (state.battleCpu.skillLockRounds > 0) state.battleCpu.skillLockRounds -= 1;
   b.busy = false;
   render();
 }
@@ -1700,8 +1928,19 @@ function advanceToNextRound() {
 // ---------- 結果画面 ----------
 
 function renderResult() {
-  const win = state.battleResult === 'win';
-  const media = win
+  const questClear = state.battleResult === 'questClear';
+  const win = state.battleResult === 'win' || questClear;
+  const media = questClear
+    ? `
+      <div class="result-photo-wrap quest-clear-wrap">
+        <div class="hero-weapon hero-sword">🗡️</div>
+        ${state.battlePlayer.image
+          ? `<img class="result-photo" src="${state.battlePlayer.image}" alt="${escapeHtml(state.battlePlayer.name)}" />`
+          : `<div class="result-photo placeholder">🧑</div>`}
+        <div class="hero-weapon hero-shield">🛡️</div>
+      </div>
+    `
+    : win
     ? `
       <div class="result-photo-wrap">
         <div class="result-crown">👑</div>
@@ -1711,11 +1950,21 @@ function renderResult() {
       </div>
     `
     : `<div class="result-emoji">🪦</div>`;
+  const questProgress = state.questMode && !questClear
+    ? `<div class="quest-progress">⚔️ クエスト進捗: ${state.questStage + 1}/${QUEST_STAGES.length} (${escapeHtml(QUEST_STAGES[state.questStage].name)}で${win ? '勝利' : '敗北'})</div>`
+    : '';
+  const title = questClear ? 'クエストクリア！' : win ? 'しょうり！' : 'はいぼく…';
+  const subtitle = questClear
+    ? `勇者${escapeHtml(state.battlePlayer.name)}は魔王を倒した！`
+    : win
+    ? `${escapeHtml(state.battleCpu.name)}を倒した！`
+    : `${escapeHtml(state.battlePlayer.name)}はたおれてしまった…`;
   return `
     <div class="screen result-screen">
       ${media}
-      <div class="result-title ${win ? 'win' : 'lose'}">${win ? 'しょうり！' : 'はいぼく…'}</div>
-      <div class="subtitle">${win ? `${escapeHtml(state.battleCpu.name)}を倒した！` : `${escapeHtml(state.battlePlayer.name)}はたおれてしまった…`}</div>
+      <div class="result-title ${win ? 'win' : 'lose'}">${title}</div>
+      <div class="subtitle">${subtitle}</div>
+      ${questProgress}
       <button class="btn block" id="restartBtn">もう一度あそぶ</button>
     </div>
   `;
@@ -1739,6 +1988,10 @@ function bindResult() {
     state.cpuSkillDeck = null;
     state.battle = null;
     state.battleResult = null;
+    state.questMode = false;
+    state.questStage = 0;
+    state.questReward = null;
+    state.questCarry = null;
     render();
   };
 }

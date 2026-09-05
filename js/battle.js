@@ -43,6 +43,22 @@ function resolveCommand(command, attacker, defender, atkBonus) {
       const damage = Math.round(effAtk * 0.5);
       return { targetsSelf: false, damage, label: '刀狩り', atkPenalty: 2 };
     }
+    case COMMAND_TYPES.TACKLE:
+      return { targetsSelf: false, damage: Math.round(effAtk * 1.5), label: 'タックル' };
+    case COMMAND_TYPES.BLIZZARD: {
+      const damage = Math.round(effAtk * 1.5);
+      return { targetsSelf: false, damage, label: 'ブリザード', skillLock: true };
+    }
+    case COMMAND_TYPES.EVIL_AURA: {
+      // 自分の攻撃力を永続で2倍にし、その倍加後の攻撃力でクリティカル(2倍)扱いのダメージを与える
+      attacker.atk = Math.round(attacker.atk * 2);
+      attacker.usedEvilAura = true;
+      const boostedEffAtk = attacker.atk + (atkBonus || 0);
+      const damage = Math.round(boostedEffAtk * 2);
+      return { targetsSelf: false, damage, label: 'イビルオーラ' };
+    }
+    case COMMAND_TYPES.DESTROY:
+      return { targetsSelf: false, damage: Math.round(effAtk * 2), label: 'デストロイ' };
     case COMMAND_TYPES.MISS:
     default:
       return { targetsSelf: false, damage: 0, label: 'ミス' };

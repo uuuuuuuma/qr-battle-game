@@ -26,6 +26,11 @@ const COMMAND_TYPES = {
   COLLAPSE: 'コラプス',
   LEG_SWEEP: '足払い',
   SWORD_HUNT: '刀狩り',
+  // ここから下はクエストモードのCPU専用コマンド。通常の生成プールには含まれない
+  TACKLE: 'タックル',
+  BLIZZARD: 'ブリザード',
+  EVIL_AURA: 'イビルオーラ',
+  DESTROY: 'デストロイ',
 };
 
 // クリティカル・コンボ・ポイズンは「Sコマンド」。各コマンド表に必ず1つ以上含める
@@ -124,18 +129,42 @@ function generateCharacterFromText(text, name, imageDataUrl) {
     poisoned: false,
     poisonStacks: 0, // 毒を受けた回数。2以上で「猛毒」(ダメージ率が上がる)になる
     voltageBonus: 0, // 「ボルテージ」で永続加算される攻撃力(状態異常ではないためヒールで解除されない)
+    skillLockRounds: 0, // 「ブリザード」を受けた影響でスキルカードを使えない残りラウンド数
+    usedEvilAura: false, // 「イビルオーラ」を使用済みか(魔王のHP50%以下トリガーの自動発動と重複させないため)
+    isDemonKing: false, // 魔王かどうか(HP50%以下トリガーの対象を判定するため)
     image: imageDataUrl || null,
     sourceText: text,
   };
 }
 
-function generateCpuCharacter() {
+// クエストモードのステージ定義。ゴブリン→ウィザード→魔王の順に戦う。
+// multiplier は通常CPU比のHP・攻撃力倍率、exclusiveCommand はそのCPU固有のコマンド
+// (コマンド表に必ず1つ出現するよう強制する)
+const QUEST_STAGES = [
+  { name: 'ゴブリン', multiplier: 1, exclusiveCommand: COMMAND_TYPES.TACKLE },
+  { name: 'ウィザード', multiplier: 1.5, exclusiveCommand: COMMAND_TYPES.BLIZZARD },
+  { name: '魔王', multiplier: 2, exclusiveCommand: COMMAND_TYPES.EVIL_AURA, isDemonKing: true },
+];
+
+// コマンド表に指定コマンドが無ければ、ランダムな面を強制的にそのコマンドにする
+function forceCommandIntoTable(table, command, randFn) {
+  if (table.includes(command)) return;
+  const idx = Math.floor((randFn || Math.random)() * table.length);
+  table[idx] = command;
+}
+
+// stage を渡すとクエストモード用のCPU(ゴブリン/ウィザード/魔王)を生成する。省略時は通常バトル用CPU
+function generateCpuCharacter(stage) {
   const seedText = 'CPU-' + Date.now() + '-' + Math.floor(Math.random() * 1000000);
-  const cpu = generateCharacterFromText(seedText, 'CPU', null);
+  const name = stage ? stage.name : 'CPU';
+  const cpu = generateCharacterFromText(seedText, name, null);
   cpu.commandTable = cpu.commandTableOptions[Math.floor(Math.random() * cpu.commandTableOptions.length)];
-  cpu.speedCardBase = generateSpeedCardBase(seedText, 'CPU');
-  cpu.skillCardBase = generateSkillCardBase(seedText, 'CPU');
-  const wildSet = generateWildcardSet('CPU', 0); // CPUは1セットだけ生成してそのまま使う
+  if (stage && stage.exclusiveCommand) {
+    forceCommandIntoTable(cpu.commandTable, stage.exclusiveCommand);
+  }
+  cpu.speedCardBase = generateSpeedCardBase(seedText, name);
+  cpu.skillCardBase = generateSkillCardBase(seedText, name);
+  const wildSet = generateWildcardSet(name, 0); // CPUは1セットだけ生成してそのまま使う
   cpu.speedCardPool = cpu.speedCardBase.concat(wildSet.speedWilds);
   cpu.skillCardPool = cpu.skillCardBase.concat(wildSet.skillWilds);
   // どのカードが選ばれるかはランダムだが、一覧の表示順はプレイヤー側と同じ並び順に揃える
@@ -143,6 +172,14 @@ function generateCpuCharacter() {
   cpu.speedCards = shuffleArray(cpu.speedCardPool).slice(0, 10).sort((a, b) => b.speed - a.speed); // CPUはランダムに10枚選ぶ
   cpu.skillCards = shuffleArray(cpu.skillCardPool).slice(0, 6)
     .sort((a, b) => typeOrder.indexOf(a.effectType) - typeOrder.indexOf(b.effectType)); // CPUはランダムに6枚選ぶ
+
+  if (stage && stage.multiplier !== 1) {
+    cpu.hp = Math.round(cpu.hp * stage.multiplier);
+    cpu.maxHp = cpu.hp;
+    cpu.atk = Math.round(cpu.atk * stage.multiplier);
+    cpu.baseAtk = cpu.atk;
+  }
+  cpu.isDemonKing = !!(stage && stage.isDemonKing);
   return cpu;
 }
 

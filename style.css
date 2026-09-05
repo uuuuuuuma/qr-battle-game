@@ -309,6 +309,19 @@ body {
   transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
 
+/* クエスト報酬画面では command-cell を交換用のボタンとしても使う */
+button.command-cell {
+  appearance: none;
+  font: inherit;
+  color: var(--text);
+  cursor: pointer;
+  width: 100%;
+}
+
+button.command-cell:active {
+  transform: scale(0.96);
+}
+
 .command-cell .face {
   font-size: 11px;
   color: var(--text-dim);
@@ -328,6 +341,10 @@ body {
 .command-cell.heal .cmd { color: #4dd4a3; }
 .command-cell.poison .cmd { color: #8a5cf6; }
 .command-cell.collapse .cmd { color: #ff5252; }
+.command-cell.tackle .cmd { color: #ff6b3d; }
+.command-cell.blizzard .cmd { color: #6cd4ff; }
+.command-cell.evil-aura .cmd { color: #d94dff; }
+.command-cell.destroy .cmd { color: #ff1f4d; }
 .command-cell.hidden .cmd { color: var(--text-dim); }
 .command-cell.hidden { opacity: 0.6; }
 
@@ -953,6 +970,79 @@ canvas.hidden-canvas {
   transform: translateX(-50%) rotate(-8deg);
   font-size: 56px;
   filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.4));
+}
+
+/* --- クエストモード --- */
+.quest-progress {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffd166;
+  background: rgba(255, 209, 102, 0.12);
+  border: 1px solid rgba(255, 209, 102, 0.35);
+  border-radius: 999px;
+  padding: 6px 12px;
+}
+
+.quest-reward-section {
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  padding: 12px;
+  background: rgba(255,255,255,0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reward-highlight {
+  justify-content: center;
+}
+
+.reward-highlight .command-cell,
+.reward-highlight .act-card {
+  border-color: #ffd166;
+  box-shadow: 0 0 0 2px rgba(255, 209, 102, 0.35);
+  cursor: default;
+}
+
+.reward-highlight .command-cell {
+  max-width: 140px;
+  margin: 0 auto;
+}
+
+.skill-locked-note {
+  font-size: 13px;
+  color: var(--text-dim);
+  text-align: center;
+  padding: 10px;
+  border: 1px dashed var(--card-border);
+  border-radius: 12px;
+}
+
+/* --- 結果画面: クエストクリア(写真の左右に剣と盾) --- */
+.quest-clear-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: auto;
+}
+
+.quest-clear-wrap .result-photo {
+  border-color: #ffd166;
+}
+
+.hero-weapon {
+  font-size: 48px;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.4));
+}
+
+.hero-sword {
+  transform: rotate(-25deg);
+}
+
+.hero-shield {
+  transform: rotate(15deg);
 }
 
 /* --- 相手のカード一覧ポップアップ --- */
