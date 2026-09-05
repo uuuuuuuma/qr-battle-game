@@ -195,6 +195,9 @@ function showCharacterEffectsPopup(character) {
   if (character.atk < character.baseAtk) {
     lines.push(`🗡️ 刀狩りを受けた影響: 攻撃力が永続で${character.baseAtk}→${character.atk}に低下しています`);
   }
+  if ((character.voltageBonus || 0) > 0) {
+    lines.push(`🔋 ボルテージ: 攻撃力(とヒール量)が+${character.voltageBonus}されています(状態異常ではないためヒールでは解除されません)`);
+  }
   if (character.poisoned) {
     const severe = (character.poisonStacks || 0) >= 2;
     lines.push(severe
@@ -260,10 +263,6 @@ function render() {
     case 'selectSkillCards':
       app.innerHTML = renderSelectSkillCards();
       bindSelectSkillCards();
-      break;
-    case 'preview':
-      app.innerHTML = renderPreview();
-      bindPreview();
       break;
     case 'ready':
       app.innerHTML = renderReady();
@@ -529,6 +528,10 @@ function buildCharacterInfoBody(char) {
     <div style="display:flex; justify-content:center;">${avatar}</div>
     <div class="char-name" style="text-align:center; margin-top:8px; font-size:18px;">${escapeHtml(char.name)}</div>
     <div class="stat-row" style="justify-content:center; gap:16px; margin-top:4px;"><span>HP ${char.maxHp}</span><span>攻撃力 ${char.baseAtk}</span></div>
+    ${char.commandTable ? `
+      <div class="section-label">コマンド表(長押しで説明)</div>
+      ${renderCommandTable(char.commandTable)}
+    ` : ''}
     <div class="section-label">スピードカード(10枚)</div>
     <div class="act-card-grid">${char.speedCardBase.map((c) => renderSpeedCardFace(c, true)).join('')}</div>
     <div class="section-label">スキルカード(6枚・長押しで説明)</div>
@@ -538,7 +541,9 @@ function buildCharacterInfoBody(char) {
 
 function showCharacterInfoPopup(char) {
   showPopup(`${char.name}の情報`, buildCharacterInfoBody(char));
-  bindSkillCardPopupsIn(document.getElementById('popupBody'), char.skillCardBase);
+  const popupBody = document.getElementById('popupBody');
+  bindSkillCardPopupsIn(popupBody, char.skillCardBase);
+  if (char.commandTable) bindCommandTablePopups(popupBody);
 }
 
 // 選択画面の上部に「今のキャラ情報」ボタンを設置し、ポップアップで確認できるようにする
@@ -833,7 +838,8 @@ function bindSelectSkillCards() {
       state.editingFromReady = false;
       state.screen = 'ready';
     } else {
-      state.screen = 'preview';
+      state.cpuCharacter = generateCpuCharacter();
+      state.screen = 'ready';
     }
     render();
   };
@@ -854,6 +860,7 @@ function renderStatusBadges(char) {
   else if (speedBonus < 0) badges.push(`<span class="status-badge slow">🦵${speedBonus}</span>`);
   if ((char.comboMultiplier || 1) > 1) badges.push(`<span class="status-badge combo">🔗×${char.comboMultiplier.toFixed(1)}</span>`);
   if (char.atk < char.baseAtk) badges.push(`<span class="status-badge weak">🗡️${char.atk - char.baseAtk}</span>`);
+  if ((char.voltageBonus || 0) > 0) badges.push(`<span class="status-badge voltage">🔋ボルテージ+${char.voltageBonus}</span>`);
   return badges.join(' ');
 }
 
@@ -874,17 +881,19 @@ function renderCharacterCard(char, compact) {
   `;
 }
 
-// 対戦画面用: 左右に並べて表示する縦型カード(写真は大きめ)。poisonHit が true の間、紫のエフェクトを付ける
-function renderVsCharacterCard(char, poisonHit, side) {
+// 対戦画面用: 左右に並べて表示する縦型カード(写真は大きめ)。poisonHit が true の間、紫のエフェクトを付ける。
+// chargeBonus はそのラウンド中だけ「チャージ」で乗っている一時的な攻撃力ボーナス(ラウンド終了で自然に消える)
+function renderVsCharacterCard(char, poisonHit, side, chargeBonus) {
   const avatar = char.image
     ? `<img class="char-avatar-lg" src="${char.image}" alt="${escapeHtml(char.name)}" />`
     : `<div class="char-avatar-lg">${char.name === 'CPU' ? '🤖' : '🧑'}</div>`;
   const hpPct = Math.max(0, Math.round((char.hp / char.maxHp) * 100));
+  const chargeBadge = chargeBonus > 0 ? `<span class="status-badge charge">🔥チャージ+${chargeBonus}</span>` : '';
   return `
     <div class="vs-char-card ${poisonHit ? 'poison-hit' : ''}" data-char-side="${side}">
       ${avatar}
       <div class="char-name">${escapeHtml(char.name)}</div>
-      <div class="badge-row">${renderStatusBadges(char)}</div>
+      <div class="badge-row">${renderStatusBadges(char)} ${chargeBadge}</div>
       <div class="stat-row"><span>HP ${char.hp}/${char.maxHp}</span></div>
       <div class="stat-row"><span>攻撃力 ${char.atk}</span></div>
       <div class="hp-bar-track"><div class="hp-bar-fill ${hpPct <= 30 ? 'low' : ''}" style="width:${hpPct}%"></div></div>
@@ -978,48 +987,6 @@ function renderSkillCardFace(card, small) {
 
 function renderCardBack(small) {
   return `<div class="act-card ${small ? 'small' : ''} card-back">？</div>`;
-}
-
-// ---------- キャラ確認画面 ----------
-
-function renderPreview() {
-  return `
-    <div class="screen">
-      <div class="top-bar">
-        <button class="icon-btn" id="backBtn">← やり直す</button>
-        <div></div>
-      </div>
-      <div class="title" style="font-size:20px;">キャラクター確認</div>
-      ${renderCharacterCard(state.playerCharacter, false)}
-      <div class="section-label">コマンド表(サイコロの目 → 行動・長押しで説明)</div>
-      ${renderCommandTable(state.playerCharacter.commandTable)}
-      <div class="section-label">選んだスピードカード(10枚)</div>
-      <div class="act-card-grid">${state.playerCharacter.speedCards.map((c) => renderSpeedCardFace(c, true)).join('')}</div>
-      <div class="section-label">選んだスキルカード(6枚・長押しで説明)</div>
-      <div class="act-card-grid">${state.playerCharacter.skillCards.map((c) => renderSkillCardFace(c, true)).join('')}</div>
-      <div class="spacer"></div>
-      <button class="btn block" id="battleStartBtn">バトル開始</button>
-    </div>
-  `;
-}
-
-function bindPreview() {
-  document.getElementById('backBtn').onclick = () => {
-    state.screen = 'home';
-    state.qrText = null;
-    state.photoDataUrl = null;
-    state.playerCharacter = null;
-    state.speedCardSelection = null;
-    state.skillCardSelection = null;
-    render();
-  };
-  document.getElementById('battleStartBtn').onclick = () => {
-    state.cpuCharacter = generateCpuCharacter();
-    state.screen = 'ready';
-    render();
-  };
-  bindCommandTablePopups();
-  bindSkillCardPopupsIn(document, state.playerCharacter.skillCards);
 }
 
 // ---------- 準備(Ready?)画面 ----------
@@ -1128,9 +1095,9 @@ function renderBattle() {
   return `
     <div class="screen">
       <div class="vs-arena">
-        ${renderVsCharacterCard(state.battlePlayer, b.poisonHitSides.includes('player'), 'player')}
+        ${renderVsCharacterCard(state.battlePlayer, b.poisonHitSides.includes('player'), 'player', b.playerAtkBonus)}
         <div class="vs-label">VS</div>
-        ${renderVsCharacterCard(state.battleCpu, b.poisonHitSides.includes('cpu'), 'cpu')}
+        ${renderVsCharacterCard(state.battleCpu, b.poisonHitSides.includes('cpu'), 'cpu', b.cpuAtkBonus)}
       </div>
       <div class="round-label">ラウンド ${b.round}</div>
       <div class="battle-arena"${arenaStyle}>
@@ -1474,7 +1441,15 @@ async function onPlayerPlayCards() {
   addLog(`スピード勝負: ${winnerIsPlayer ? 'あなた' : 'CPU'}の勝ち！ (${playerEffSpeed} vs ${cpuEffSpeed})${reversed ? '(騙し討ちで逆転)' : ''}`);
   b.message = winnerIsPlayer ? `スピード勝ち！(${playerEffSpeed} vs ${cpuEffSpeed}) あなたの攻撃！` : `スピード負け…(${playerEffSpeed} vs ${cpuEffSpeed}) CPUの攻撃！`;
   render();
-  await wait(700);
+  if (winnerIsPlayer) {
+    await wait(700);
+  } else {
+    // スピードバトルに負けた場合は、結果を確認してから「つぎへ」ボタンで進む
+    b.awaitingContinue = true;
+    render();
+    await waitForContinueClick();
+    b.awaitingContinue = false;
+  }
 
   const attacker = winnerIsPlayer ? state.battlePlayer : state.battleCpu;
   const defender = winnerIsPlayer ? state.battleCpu : state.battlePlayer;
@@ -1511,7 +1486,8 @@ async function onPlayerPlayCards() {
   }
 
   const command = attacker.commandTable[dice - 1];
-  const atkBonus = winnerIsPlayer ? b.playerAtkBonus : b.cpuAtkBonus;
+  const chargeBonus = winnerIsPlayer ? b.playerAtkBonus : b.cpuAtkBonus;
+  const atkBonus = chargeBonus + (attacker.voltageBonus || 0);
   const result = resolveCommand(command, attacker, defender, atkBonus);
   b.commandEffect = { type: command, label: result.label };
 
@@ -1649,25 +1625,25 @@ async function runVoltageEvent() {
   b.diceValue = null;
   b.commandEffect = null;
   b.arenaColor = '#ffd166';
-  b.message = '⚡ボルテージ発生！ お互いサイコロを振って攻撃力が永続上昇！';
+  b.message = '⚡ボルテージ発生！ サイコロを振って攻撃力が上昇！';
+  b.awaitingDiceRoll = true;
   render();
-  await wait(900);
+  await waitForContinueClick();
+  b.awaitingDiceRoll = false;
 
   const playerRoll = rollDice();
-  state.battlePlayer.atk += playerRoll;
-  state.battlePlayer.baseAtk += playerRoll;
+  state.battlePlayer.voltageBonus = (state.battlePlayer.voltageBonus || 0) + playerRoll;
   b.diceValue = playerRoll;
-  b.message = `あなたのボルテージ！ 攻撃力+${playerRoll}(永続)`;
-  addLog(`⚡ボルテージ: あなたの攻撃力が+${playerRoll}された(永続)`);
+  b.message = `あなたのボルテージ！ 攻撃力+${playerRoll}(状態異常ではないためヒールでは解除されません)`;
+  addLog(`⚡ボルテージ: あなたに「ボルテージ+${playerRoll}」が付与された`);
   render();
   await wait(900);
 
   const cpuRoll = rollDice();
-  state.battleCpu.atk += cpuRoll;
-  state.battleCpu.baseAtk += cpuRoll;
+  state.battleCpu.voltageBonus = (state.battleCpu.voltageBonus || 0) + cpuRoll;
   b.diceValue = cpuRoll;
-  b.message = `CPUのボルテージ！ 攻撃力+${cpuRoll}(永続)`;
-  addLog(`⚡ボルテージ: CPUの攻撃力が+${cpuRoll}された(永続)`);
+  b.message = `CPUのボルテージ！ 攻撃力+${cpuRoll}(状態異常ではないためヒールでは解除されません)`;
+  addLog(`⚡ボルテージ: CPUに「ボルテージ+${cpuRoll}」が付与された`);
   render();
   await wait(900);
 
@@ -1698,6 +1674,8 @@ function advanceToNextRound() {
   b.poisonHitSides = [];
   b.playerActiveFace = null;
   b.cpuActiveFace = null;
+  b.playerAtkBonus = 0;
+  b.cpuAtkBonus = 0;
   b.busy = false;
   render();
 }

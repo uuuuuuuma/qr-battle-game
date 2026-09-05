@@ -123,6 +123,7 @@ function generateCharacterFromText(text, name, imageDataUrl) {
     permanentSpeedBonus: 0, // 「アクセル」を使うたびに+1され、ゲーム終了まで持続する
     poisoned: false,
     poisonStacks: 0, // 毒を受けた回数。2以上で「猛毒」(ダメージ率が上がる)になる
+    voltageBonus: 0, // 「ボルテージ」で永続加算される攻撃力(状態異常ではないためヒールで解除されない)
     image: imageDataUrl || null,
     sourceText: text,
   };

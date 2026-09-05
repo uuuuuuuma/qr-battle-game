@@ -910,6 +910,16 @@ canvas.hidden-canvas {
   color: #ff5252;
 }
 
+.status-badge.voltage {
+  background: rgba(255, 209, 102, 0.18);
+  color: #ffd166;
+}
+
+.status-badge.charge {
+  background: rgba(255, 159, 64, 0.18);
+  color: #ff9f40;
+}
+
 /* --- 結果画面: 勝利写真+王冠 / 敗北の墓 --- */
 .result-photo-wrap {
   position: relative;
