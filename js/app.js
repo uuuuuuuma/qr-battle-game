@@ -253,7 +253,7 @@ function updateIdentityBar() {
     nameEl.textContent = char.name;
   } else {
     avatarEl.innerHTML = '⚔️';
-    nameEl.textContent = 'QRバトル';
+    nameEl.textContent = 'Glyph Wars';
   }
 }
 
@@ -356,7 +356,7 @@ function renderHome() {
     <div class="screen">
       <div class="spacer"></div>
       ${renderQrOrnament()}
-      <div class="title">QRバトル</div>
+      <div class="title">Glyph Wars</div>
       <div class="subtitle">QRコードを読み取って自分だけのキャラクターを作り、CPUと対戦しよう。</div>
       <div class="spacer"></div>
       <button class="btn block" id="normalModeBtn">通常バトル</button>
