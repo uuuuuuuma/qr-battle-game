@@ -147,7 +147,7 @@ function generateCpuCharacter() {
 
 // ---------- スピードカード生成 ----------
 // スピード(1〜10)のみを持つカードを10枚生成する(QR由来の疑似乱数)。
-// 少なくとも3枚はスピード7〜10になるようにする。
+// 少なくとも3枚はスピード7〜10、少なくとも3枚はスピード1〜3になるようにする。
 
 function generateSpeedCardBase(text, name) {
   const rand = createSeededRandom(text + '::speed::' + name);
@@ -156,12 +156,19 @@ function generateSpeedCardBase(text, name) {
   for (let i = 0; i < 10; i++) {
     speeds.push(1 + Math.floor(rand() * 10));
   }
-  let highCount = speeds.filter((s) => s >= 7).length;
-  for (let i = 0; i < speeds.length && highCount < 3; i++) {
-    if (speeds[i] < 7) {
-      speeds[i] = 7 + Math.floor(rand() * 4); // 7-10
-      highCount++;
-    }
+
+  // インデックスをシード乱数でシャッフルし、先頭3枚を低速(1-3)・次の3枚を高速(7-10)に
+  // 上書きする。こうすることで両方の枚数保証(残り4枚は完全ランダム)を必ず両立できる。
+  const order = [...Array(10).keys()];
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  for (let k = 0; k < 3; k++) {
+    speeds[order[k]] = 1 + Math.floor(rand() * 3); // 1-3
+  }
+  for (let k = 3; k < 6; k++) {
+    speeds[order[k]] = 7 + Math.floor(rand() * 4); // 7-10
   }
 
   return speeds
@@ -197,13 +204,13 @@ function generateSkillCardBase(text, name) {
   return baseCards; // 6枚
 }
 
-// スキルカードの効果種別を重み付きで選ぶ。「アクセル」は他の半分程度の出現率にする
+// スキルカードの効果種別を重み付きで選ぶ。「アクセル」「騙し討ち」は他の半分程度の出現率にする
 function pickSkillEffectType(randFn) {
   const pool = [
     { type: EFFECT_TYPES.CHARGE, w: 2 },
     { type: EFFECT_TYPES.GUARD, w: 2 },
     { type: EFFECT_TYPES.AGILE, w: 2 },
-    { type: EFFECT_TYPES.REVERSE, w: 2 },
+    { type: EFFECT_TYPES.REVERSE, w: 1 },
     { type: EFFECT_TYPES.CHOICE, w: 2 },
     { type: EFFECT_TYPES.ACCEL, w: 1 },
   ];
@@ -249,7 +256,7 @@ function generateWildcardSetOptions(name) {
 function rollSkillN(randFn, effectType) {
   switch (effectType) {
     case EFFECT_TYPES.CHARGE:
-      return 2 + Math.floor(randFn() * 9); // 2-10
+      return 5 + Math.floor(randFn() * 6); // 5-10
     case EFFECT_TYPES.GUARD: {
       const step = 2 + Math.floor(randFn() * 4); // 2,3,4,5
       return step / 10; // 0.2〜0.5倍

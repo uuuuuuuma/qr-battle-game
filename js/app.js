@@ -128,13 +128,13 @@ function skillEffectDescription(card) {
   const n = card.n;
   switch (card.effectType) {
     case EFFECT_TYPES.CHARGE:
-      return `このラウンド中、攻撃力が+${n}上昇し、スピードが${n / 2}低下します。`;
+      return `このラウンド中、攻撃力が+${n}上昇します。`;
     case EFFECT_TYPES.GUARD:
       return `このラウンドで攻撃できなかった場合、受けるダメージが${n}倍(${Math.round(n * 100)}%)に軽減されます。`;
     case EFFECT_TYPES.ACCEL:
       return 'このラウンドのスピードが0になる代わりに、次のラウンド以降ずっとスピードが+1されます(このバトル中永続・重ねがけ可能)。';
     case EFFECT_TYPES.AGILE:
-      return `このラウンド中、スピードが+${n}上昇し、攻撃力が-${n * 2}低下します。`;
+      return `このラウンド中、スピードが+${n}上昇します。`;
     case EFFECT_TYPES.REVERSE:
       return 'このラウンドのスピード勝負は、スピードが低い方が勝ちになります(お互いが使った場合は元に戻ります)。';
     case EFFECT_TYPES.CHOICE:
@@ -1350,15 +1350,9 @@ function applySkillCardEffect(skillCard, side) {
   const label = side === 'player' ? 'あなた' : 'CPU';
   switch (skillCard.effectType) {
     case EFFECT_TYPES.CHARGE: {
-      const speedDelta = -skillCard.n / 2;
-      if (side === 'player') {
-        b.playerAtkBonus = skillCard.n;
-        b.playerSpeedDelta = speedDelta;
-      } else {
-        b.cpuAtkBonus = skillCard.n;
-        b.cpuSpeedDelta = speedDelta;
-      }
-      addLog(`${label}: 「${skillCard.label}」発動！ 攻撃力+${skillCard.n}、スピード${speedDelta}`);
+      if (side === 'player') b.playerAtkBonus = skillCard.n;
+      else b.cpuAtkBonus = skillCard.n;
+      addLog(`${label}: 「${skillCard.label}」発動！ 攻撃力+${skillCard.n}`);
       break;
     }
     case EFFECT_TYPES.GUARD: {
@@ -1376,14 +1370,9 @@ function applySkillCardEffect(skillCard, side) {
       break;
     }
     case EFFECT_TYPES.AGILE: {
-      if (side === 'player') {
-        b.playerSpeedDelta = skillCard.n;
-        b.playerAtkBonus = -skillCard.n * 2;
-      } else {
-        b.cpuSpeedDelta = skillCard.n;
-        b.cpuAtkBonus = -skillCard.n * 2;
-      }
-      addLog(`${label}: 「${skillCard.label}」発動！ スピード+${skillCard.n}、攻撃力-${skillCard.n * 2}`);
+      if (side === 'player') b.playerSpeedDelta = skillCard.n;
+      else b.cpuSpeedDelta = skillCard.n;
+      addLog(`${label}: 「${skillCard.label}」発動！ スピード+${skillCard.n}`);
       break;
     }
     case EFFECT_TYPES.REVERSE: {
