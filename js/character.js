@@ -24,6 +24,8 @@ const COMMAND_TYPES = {
   HEAL: 'ヒール',
   POISON: 'ポイズン',
   COLLAPSE: 'コラプス',
+  LEG_SWEEP: '足払い',
+  SWORD_HUNT: '刀狩り',
 };
 
 // クリティカル・コンボ・ポイズンは「Sコマンド」。各コマンド表に必ず1つ以上含める
@@ -39,6 +41,8 @@ const EFFECT_TYPES = {
   GUARD: '受け身',
   ACCEL: 'アクセル',
   AGILE: '身軽',
+  REVERSE: '騙し討ち',
+  CHOICE: 'チョイス',
 };
 
 function clamp(v, min, max) {
@@ -57,6 +61,8 @@ function pickCommandForFace(rand, attackRate) {
     { cmd: COMMAND_TYPES.CRITICAL, w: 12 },
     { cmd: COMMAND_TYPES.COMBO, w: 10 },
     { cmd: COMMAND_TYPES.POISON, w: 8 },
+    { cmd: COMMAND_TYPES.LEG_SWEEP, w: 10 },
+    { cmd: COMMAND_TYPES.SWORD_HUNT, w: 10 },
   ];
   const total = pool.reduce((sum, p) => sum + p.w, 0);
   let r = rand() * total;
@@ -103,6 +109,7 @@ function generateCharacterFromText(text, name, imageDataUrl) {
     hp,
     maxHp: hp,
     atk,
+    baseAtk: atk, // 「刀狩り」で永続的に下がる前の元の攻撃力(バッジ表示用)
     commandTableOptions,
     commandTable: null, // 3択の中から選んだらセットされる
     speedCardBase: [], // QR由来のスピードカード10枚
@@ -165,11 +172,10 @@ function generateSpeedCardBase(text, name) {
 
 function generateSkillCardBase(text, name) {
   const rand = createSeededRandom(text + '::skill::' + name);
-  const effectPool = [EFFECT_TYPES.CHARGE, EFFECT_TYPES.GUARD, EFFECT_TYPES.ACCEL, EFFECT_TYPES.AGILE];
 
   const baseCards = [];
   for (let i = 0; i < 6; i++) {
-    const effectType = effectPool[Math.floor(rand() * effectPool.length)];
+    const effectType = pickSkillEffectType(rand);
     const n = rollSkillN(rand, effectType);
     baseCards.push({
       id: `${name}-skill-${i}-${effectType}-${n}`,
@@ -182,6 +188,25 @@ function generateSkillCardBase(text, name) {
   return baseCards; // 6枚
 }
 
+// スキルカードの効果種別を重み付きで選ぶ。「アクセル」は他の半分程度の出現率にする
+function pickSkillEffectType(randFn) {
+  const pool = [
+    { type: EFFECT_TYPES.CHARGE, w: 2 },
+    { type: EFFECT_TYPES.GUARD, w: 2 },
+    { type: EFFECT_TYPES.AGILE, w: 2 },
+    { type: EFFECT_TYPES.REVERSE, w: 2 },
+    { type: EFFECT_TYPES.CHOICE, w: 2 },
+    { type: EFFECT_TYPES.ACCEL, w: 1 },
+  ];
+  const total = pool.reduce((sum, p) => sum + p.w, 0);
+  let r = randFn() * total;
+  for (const p of pool) {
+    if (r < p.w) return p.type;
+    r -= p.w;
+  }
+  return pool[0].type;
+}
+
 // ---------- ワイルドカードセット生成 ----------
 // 完全ランダム(QRに依存しないMath.random)な「スピードカード2枚+スキルカード3枚」の
 // セットを作る。プレイヤーには3セット提示し、1つだけ選んでもらう。
@@ -192,9 +217,8 @@ function generateWildcardSet(name, setIndex) {
     return { id: `${name}-wildset${setIndex}-speed-${i}-${speed}`, speed, isWild: true };
   });
 
-  const effectPool = [EFFECT_TYPES.CHARGE, EFFECT_TYPES.GUARD, EFFECT_TYPES.ACCEL, EFFECT_TYPES.AGILE];
   const skillWilds = [0, 1, 2].map((i) => {
-    const effectType = effectPool[Math.floor(Math.random() * effectPool.length)];
+    const effectType = pickSkillEffectType(Math.random);
     const n = rollSkillN(Math.random, effectType);
     return {
       id: `${name}-wildset${setIndex}-skill-${i}-${effectType}-${n}`,
@@ -223,9 +247,12 @@ function rollSkillN(randFn, effectType) {
     }
     case EFFECT_TYPES.AGILE:
       return 1 + Math.floor(randFn() * 3); // 1-3
+    case EFFECT_TYPES.CHOICE:
+      return 1 + Math.floor(randFn() * 6); // 出目1〜6
     case EFFECT_TYPES.ACCEL:
+    case EFFECT_TYPES.REVERSE:
     default:
-      return null; // アクセルは固定効果でnを使わない
+      return null; // アクセル・騙し討ちは固定効果でnを使わない
   }
 }
 
@@ -239,6 +266,10 @@ function formatSkillLabel(effectType, n) {
       return 'アクセル';
     case EFFECT_TYPES.AGILE:
       return `身軽+${n}`;
+    case EFFECT_TYPES.REVERSE:
+      return '騙し討ち';
+    case EFFECT_TYPES.CHOICE:
+      return `チョイス${n}`;
     default:
       return '';
   }

@@ -503,9 +503,10 @@ body {
 }
 
 .act-card.selected {
+  background: var(--accent);
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(108, 140, 255, 0.4);
-  background: rgba(108, 140, 255, 0.12);
+  box-shadow: 0 0 0 3px rgba(108, 140, 255, 0.45), 0 4px 18px rgba(108, 140, 255, 0.5);
+  transform: scale(1.04);
 }
 
 .eff-speed-badge {
@@ -874,4 +875,55 @@ canvas.hidden-canvas {
 
 .popup-body div {
   margin-bottom: 4px;
+}
+
+/* 選択中カードは色反転(明るい背景+濃色文字)で強調する。効果色より後に置いて上書きする */
+.act-card.selected .act-card-speed,
+.act-card.selected .act-card-label {
+  color: #10122a;
+}
+
+.status-badge.slow {
+  background: rgba(255, 159, 107, 0.18);
+  color: #ff9f6b;
+}
+
+.status-badge.weak {
+  background: rgba(255, 82, 82, 0.18);
+  color: #ff5252;
+}
+
+/* --- 結果画面: 勝利写真+王冠 / 敗北の墓 --- */
+.result-photo-wrap {
+  position: relative;
+  width: 160px;
+  height: 160px;
+  margin: 0 auto;
+}
+
+.result-photo {
+  width: 160px;
+  height: 160px;
+  border-radius: 24px;
+  object-fit: cover;
+  border: 3px solid #ffd166;
+  box-shadow: 0 0 30px rgba(255, 209, 102, 0.45);
+  display: block;
+}
+
+.result-photo.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 64px;
+  background: linear-gradient(135deg, #3a3f66, #262a45);
+}
+
+.result-crown {
+  position: absolute;
+  top: -36px;
+  left: 50%;
+  transform: translateX(-50%) rotate(-8deg);
+  font-size: 56px;
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.4));
 }

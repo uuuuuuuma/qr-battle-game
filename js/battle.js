@@ -24,7 +24,7 @@ function resolveCommand(command, attacker, defender, atkBonus) {
     }
     case COMMAND_TYPES.HEAL: {
       const heal = Math.round(effAtk * 0.5);
-      return { targetsSelf: true, heal, label: 'ヒール' };
+      return { targetsSelf: true, heal, label: 'ヒール', curesStatus: true };
     }
     case COMMAND_TYPES.POISON: {
       const damage = Math.round(effAtk * 0.5);
@@ -34,6 +34,14 @@ function resolveCommand(command, attacker, defender, atkBonus) {
     case COMMAND_TYPES.COLLAPSE: {
       const damage = Math.round(defender.maxHp * 0.1);
       return { targetsSelf: false, damage, label: 'コラプス', collapseCheck: true };
+    }
+    case COMMAND_TYPES.LEG_SWEEP: {
+      const damage = Math.round(effAtk * 0.5);
+      return { targetsSelf: false, damage, label: '足払い', speedPenalty: 0.5 };
+    }
+    case COMMAND_TYPES.SWORD_HUNT: {
+      const damage = Math.round(effAtk * 0.5);
+      return { targetsSelf: false, damage, label: '刀狩り', atkPenalty: 2 };
     }
     case COMMAND_TYPES.MISS:
     default:

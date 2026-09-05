@@ -10,6 +10,7 @@ const state = {
   cpuCharacter: null,
   speedCardSelection: null,
   skillCardSelection: null,
+  editingFromReady: false, // Ready画面から個別の選択画面に入った場合、確定後にReadyへ戻る
   battlePlayer: null,
   battleCpu: null,
   playerSpeedDeck: null,
@@ -127,6 +128,10 @@ function skillEffectDescription(card) {
       return 'このラウンドのスピードが0になる代わりに、次のラウンド以降ずっとスピードが+1されます(このバトル中永続・重ねがけ可能)。';
     case EFFECT_TYPES.AGILE:
       return `このラウンド中、スピードが+${n}上昇し、攻撃力が-${n * 2}低下します。`;
+    case EFFECT_TYPES.REVERSE:
+      return 'このラウンドのスピード勝負は、スピードが低い方が勝ちになります(お互いが使った場合は元に戻ります)。';
+    case EFFECT_TYPES.CHOICE:
+      return `スピード勝負に勝った場合、このラウンドはサイコロを振らずに出目${n}のコマンドを実行します。`;
     default:
       return '';
   }
@@ -150,11 +155,15 @@ function commandDescription(cmd) {
     case COMMAND_TYPES.COMBO:
       return '攻撃力×コンボ倍率のダメージを与えます。使うたびに倍率が+0.3されます(このバトル中永続・重ねがけ可能)。(Sコマンド)';
     case COMMAND_TYPES.HEAL:
-      return '攻撃力の0.5倍分、自分のHPを回復します。';
+      return '攻撃力の0.5倍分、自分のHPを回復します。毒などの状態異常も同時に治します。';
     case COMMAND_TYPES.POISON:
       return '攻撃力の0.5倍のダメージを与え、50%の確率で相手を毒状態にします。毒状態は毎ラウンド終了時、残りHPの10%のダメージを受けます。(Sコマンド)';
     case COMMAND_TYPES.COLLAPSE:
       return '相手の最大HPの10%のダメージを与えます。直後にHPが最大の20%以下なら、即座に0になります。';
+    case COMMAND_TYPES.LEG_SWEEP:
+      return '攻撃力の0.5倍のダメージを与え、相手のスピードを永続で-0.5します(このバトル中永続・重ねがけ可能)。';
+    case COMMAND_TYPES.SWORD_HUNT:
+      return '攻撃力の0.5倍のダメージを与え、相手の攻撃力を永続で-2します(このバトル中永続・重ねがけ可能)。';
     default:
       return '';
   }
@@ -167,11 +176,17 @@ function showCommandPopup(cmd) {
 // キャラクターの永続効果一覧をポップアップで表示
 function showCharacterEffectsPopup(character) {
   const lines = [];
-  if ((character.permanentSpeedBonus || 0) > 0) {
-    lines.push(`⚡ アクセル効果: スピードが永続で+${character.permanentSpeedBonus}されています`);
+  const speedBonus = character.permanentSpeedBonus || 0;
+  if (speedBonus > 0) {
+    lines.push(`⚡ アクセル効果: スピードが永続で+${speedBonus}されています`);
+  } else if (speedBonus < 0) {
+    lines.push(`🦵 足払いを受けた影響: スピードが永続で${speedBonus}されています`);
   }
   if ((character.comboMultiplier || 1) > 1) {
     lines.push(`🔗 コンボ倍率: 次に「コンボ」を使うと攻撃力×${character.comboMultiplier.toFixed(1)}`);
+  }
+  if (character.atk < character.baseAtk) {
+    lines.push(`🗡️ 刀狩りを受けた影響: 攻撃力が永続で${character.baseAtk}→${character.atk}に低下しています`);
   }
   if (character.poisoned) {
     lines.push('🧪 毒状態: ラウンド終了時に残りHPの10%のダメージを受けます');
@@ -516,14 +531,25 @@ function renderSelectCommandTable() {
 
 function bindSelectCommandTable() {
   document.getElementById('backBtn').onclick = () => {
-    state.screen = 'enterName';
+    if (state.editingFromReady) {
+      state.editingFromReady = false;
+      state.screen = 'ready';
+    } else {
+      state.screen = 'enterName';
+    }
     render();
   };
   document.querySelectorAll('[data-option-index]').forEach((btn) => {
     btn.onclick = () => {
       const idx = Number(btn.dataset.optionIndex);
       state.playerCharacter.commandTable = state.playerCharacter.commandTableOptions[idx];
-      state.screen = 'selectWildcardSet';
+      if (state.editingFromReady) {
+        // Readyからの変更はコマンド表だけ差し替えて戻る(カードの選び直しは不要)
+        state.editingFromReady = false;
+        state.screen = 'ready';
+      } else {
+        state.screen = 'selectWildcardSet';
+      }
       render();
     };
   });
@@ -623,7 +649,12 @@ function renderSelectSpeedCards() {
 
 function bindSelectSpeedCards() {
   document.getElementById('backBtn').onclick = () => {
-    state.screen = 'selectWildcardSet';
+    if (state.editingFromReady) {
+      state.editingFromReady = false;
+      state.screen = 'ready';
+    } else {
+      state.screen = 'selectWildcardSet';
+    }
     render();
   };
   document.querySelectorAll('.select-grid .act-card').forEach((btn) => {
@@ -644,10 +675,16 @@ function bindSelectSpeedCards() {
   document.getElementById('confirmBtn').onclick = () => {
     if (state.speedCardSelection.size !== 10) return;
     state.playerCharacter.speedCards = state.playerCharacter.speedCardPool.filter((c) => state.speedCardSelection.has(c.id));
-    state.skillCardSelection = new Set(
-      state.playerCharacter.skillCardPool.filter((c) => !c.isWild).map((c) => c.id)
-    );
-    state.screen = 'selectSkillCards';
+    if (state.editingFromReady) {
+      // Readyからの変更はスピードカードだけ差し替えて戻る(スキルの選び直しは不要)
+      state.editingFromReady = false;
+      state.screen = 'ready';
+    } else {
+      state.skillCardSelection = new Set(
+        state.playerCharacter.skillCardPool.filter((c) => !c.isWild).map((c) => c.id)
+      );
+      state.screen = 'selectSkillCards';
+    }
     render();
   };
 }
@@ -686,7 +723,12 @@ function renderSelectSkillCards() {
 
 function bindSelectSkillCards() {
   document.getElementById('backBtn').onclick = () => {
-    state.screen = 'selectSpeedCards';
+    if (state.editingFromReady) {
+      state.editingFromReady = false;
+      state.screen = 'ready';
+    } else {
+      state.screen = 'selectSpeedCards';
+    }
     render();
   };
   const pool = state.playerCharacter.skillCardPool;
@@ -710,7 +752,12 @@ function bindSelectSkillCards() {
   document.getElementById('confirmBtn').onclick = () => {
     if (state.skillCardSelection.size !== 6) return;
     state.playerCharacter.skillCards = state.playerCharacter.skillCardPool.filter((c) => state.skillCardSelection.has(c.id));
-    state.screen = 'preview';
+    if (state.editingFromReady) {
+      state.editingFromReady = false;
+      state.screen = 'ready';
+    } else {
+      state.screen = 'preview';
+    }
     render();
   };
 }
@@ -720,8 +767,11 @@ function bindSelectSkillCards() {
 function renderStatusBadges(char) {
   const badges = [];
   if (char.poisoned) badges.push('<span class="status-badge poison">🧪毒</span>');
-  if ((char.permanentSpeedBonus || 0) > 0) badges.push(`<span class="status-badge accel">⚡+${char.permanentSpeedBonus}</span>`);
+  const speedBonus = char.permanentSpeedBonus || 0;
+  if (speedBonus > 0) badges.push(`<span class="status-badge accel">⚡+${speedBonus}</span>`);
+  else if (speedBonus < 0) badges.push(`<span class="status-badge slow">🦵${speedBonus}</span>`);
   if ((char.comboMultiplier || 1) > 1) badges.push(`<span class="status-badge combo">🔗×${char.comboMultiplier.toFixed(1)}</span>`);
+  if (char.atk < char.baseAtk) badges.push(`<span class="status-badge weak">🗡️${char.atk - char.baseAtk}</span>`);
   return badges.join(' ');
 }
 
@@ -929,6 +979,7 @@ function renderReady() {
 function bindReady() {
   document.querySelectorAll('[data-edit-target]').forEach((btn) => {
     btn.onclick = () => {
+      state.editingFromReady = true;
       state.screen = btn.dataset.editTarget;
       render();
     };
@@ -968,6 +1019,10 @@ function bindReady() {
       cpuSpeedDelta: 0,
       playerAccel: false,
       cpuAccel: false,
+      playerReverse: false,
+      cpuReverse: false,
+      playerChoiceFace: null,
+      cpuChoiceFace: null,
       commandEffect: null,
       poisonMessages: [],
       poisonHitSides: [],
@@ -1207,6 +1262,18 @@ function applySkillCardEffect(skillCard, side) {
       addLog(`${label}: 「${skillCard.label}」発動！ スピード+${skillCard.n}、攻撃力-${skillCard.n * 2}`);
       break;
     }
+    case EFFECT_TYPES.REVERSE: {
+      if (side === 'player') b.playerReverse = true;
+      else b.cpuReverse = true;
+      addLog(`${label}: 「騙し討ち」発動！ このラウンドはスピードが低い方の勝ち`);
+      break;
+    }
+    case EFFECT_TYPES.CHOICE: {
+      if (side === 'player') b.playerChoiceFace = skillCard.n;
+      else b.cpuChoiceFace = skillCard.n;
+      addLog(`${label}: 「${skillCard.label}」発動！ スピード勝負に勝てばサイコロを振らず出目${skillCard.n}を使用`);
+      break;
+    }
   }
 }
 
@@ -1255,6 +1322,10 @@ async function onPlayerPlayCards() {
   b.cpuSpeedDelta = 0;
   b.playerAccel = false;
   b.cpuAccel = false;
+  b.playerReverse = false;
+  b.cpuReverse = false;
+  b.playerChoiceFace = null;
+  b.cpuChoiceFace = null;
 
   applySkillCardEffect(playerSkillCard, 'player');
   applySkillCardEffect(cpuSkillCard, 'cpu');
@@ -1282,9 +1353,11 @@ async function onPlayerPlayCards() {
     return;
   }
 
-  const winnerIsPlayer = playerEffSpeed > cpuEffSpeed;
+  // 「騙し討ち」は片方だけが使った場合にスピードの勝敗を逆転させる(両者が使うと相殺され元通り)
+  const reversed = !!b.playerReverse !== !!b.cpuReverse;
+  const winnerIsPlayer = reversed ? playerEffSpeed < cpuEffSpeed : playerEffSpeed > cpuEffSpeed;
   b.arenaColor = winnerIsPlayer ? '#239dda' : '#e60012';
-  addLog(`スピード勝負: ${winnerIsPlayer ? 'あなた' : 'CPU'}の勝ち！ (${playerEffSpeed} vs ${cpuEffSpeed})`);
+  addLog(`スピード勝負: ${winnerIsPlayer ? 'あなた' : 'CPU'}の勝ち！ (${playerEffSpeed} vs ${cpuEffSpeed})${reversed ? '(騙し討ちで逆転)' : ''}`);
   b.message = winnerIsPlayer ? `スピード勝ち！(${playerEffSpeed} vs ${cpuEffSpeed}) あなたの攻撃！` : `スピード負け…(${playerEffSpeed} vs ${cpuEffSpeed}) CPUの攻撃！`;
   render();
   await wait(700);
@@ -1292,20 +1365,29 @@ async function onPlayerPlayCards() {
   const attacker = winnerIsPlayer ? state.battlePlayer : state.battleCpu;
   const defender = winnerIsPlayer ? state.battleCpu : state.battlePlayer;
   const attackerLabel = winnerIsPlayer ? 'あなた' : 'CPU';
+  const choiceFace = winnerIsPlayer ? b.playerChoiceFace : b.cpuChoiceFace;
 
   let dice;
-  if (winnerIsPlayer) {
-    b.message = 'あなたの番です';
-    b.awaitingDiceRoll = true;
+  if (choiceFace) {
+    dice = choiceFace;
+    b.diceValue = dice;
+    b.message = `${attackerLabel}は「チョイス${choiceFace}」で出目${choiceFace}を使用！`;
     render();
-    await waitForContinueClick();
-    b.awaitingDiceRoll = false;
+    await wait(700);
+  } else {
+    if (winnerIsPlayer) {
+      b.message = 'あなたの番です';
+      b.awaitingDiceRoll = true;
+      render();
+      await waitForContinueClick();
+      b.awaitingDiceRoll = false;
+    }
+    dice = rollDice();
+    b.diceValue = dice;
+    b.message = `${attackerLabel}がサイコロを振った…`;
+    render();
+    await wait(600);
   }
-  dice = rollDice();
-  b.diceValue = dice;
-  b.message = `${attackerLabel}がサイコロを振った…`;
-  render();
-  await wait(600);
 
   if (!winnerIsPlayer) {
     b.cpuRevealed.add(dice - 1);
@@ -1320,11 +1402,15 @@ async function onPlayerPlayCards() {
   let hitDefender = false;
 
   if (result.targetsSelf) {
-    // ヒール: 自分の体力を回復する(相手にダメージは無い)
+    // ヒール: 自分の体力を回復する(相手にダメージは無い)。状態異常も同時に治す
     const before = attacker.hp;
     attacker.hp = Math.min(attacker.maxHp, attacker.hp + result.heal);
     const healed = attacker.hp - before;
     resultText = `「${result.label}」！ HPを${healed}回復！`;
+    if (result.curesStatus && attacker.poisoned) {
+      attacker.poisoned = false;
+      resultText += ' 毒も治った！';
+    }
   } else if (command === COMMAND_TYPES.MISS) {
     resultText = '「ミス」…このラウンドは何も起こらなかった';
   } else {
@@ -1351,6 +1437,16 @@ async function onPlayerPlayCards() {
     if (command === COMMAND_TYPES.COLLAPSE && defender.hp > 0 && defender.hp <= defender.maxHp * 0.2) {
       defender.hp = 0;
       resultText += ' 相手はとどめを刺された！';
+    }
+
+    if (command === COMMAND_TYPES.LEG_SWEEP && defender.hp > 0) {
+      defender.permanentSpeedBonus = (defender.permanentSpeedBonus || 0) - result.speedPenalty;
+      resultText += ` 相手のスピードが永続で-${result.speedPenalty}された！`;
+    }
+
+    if (command === COMMAND_TYPES.SWORD_HUNT && defender.hp > 0) {
+      defender.atk = Math.max(1, defender.atk - result.atkPenalty);
+      resultText += ` 相手の攻撃力が永続で-${result.atkPenalty}された！`;
     }
   }
 
@@ -1449,9 +1545,19 @@ function advanceToNextRound() {
 
 function renderResult() {
   const win = state.battleResult === 'win';
+  const media = win
+    ? `
+      <div class="result-photo-wrap">
+        <div class="result-crown">👑</div>
+        ${state.battlePlayer.image
+          ? `<img class="result-photo" src="${state.battlePlayer.image}" alt="${escapeHtml(state.battlePlayer.name)}" />`
+          : `<div class="result-photo placeholder">🧑</div>`}
+      </div>
+    `
+    : `<div class="result-emoji">🪦</div>`;
   return `
     <div class="screen result-screen">
-      <div class="result-emoji">${win ? '🏆' : '💀'}</div>
+      ${media}
       <div class="result-title ${win ? 'win' : 'lose'}">${win ? 'しょうり！' : 'はいぼく…'}</div>
       <div class="subtitle">${win ? `${escapeHtml(state.battleCpu.name)}を倒した！` : `${escapeHtml(state.battlePlayer.name)}はたおれてしまった…`}</div>
       <button class="btn block" id="restartBtn">もう一度あそぶ</button>
@@ -1468,6 +1574,7 @@ function bindResult() {
     state.cpuCharacter = null;
     state.speedCardSelection = null;
     state.skillCardSelection = null;
+    state.editingFromReady = false;
     state.battlePlayer = null;
     state.battleCpu = null;
     state.playerSpeedDeck = null;
