@@ -1,15 +1,16 @@
 :root {
-  --bg-1: #12131c;
-  --bg-2: #1c1e2e;
-  --card: #232640;
-  --card-border: #3a3f66;
-  --accent: #6c8cff;
+  --bg-1: #0a0d1a;
+  --bg-2: #131a30;
+  --card: #12182c;
+  --card-border: #c9a24a;
+  --accent: #e0bb66;
   --accent-2: #ff6b8b;
-  --text: #f1f2f8;
-  --text-dim: #9a9cc0;
+  --text: #f3ead2;
+  --text-dim: #a89568;
   --danger: #ff4d6d;
   --success: #4dd4a3;
   --miss: #6a6d8f;
+  --font-display: 'Shippori Mincho', "Hiragino Mincho ProN", serif;
 }
 
 * {
@@ -54,10 +55,13 @@ body {
 }
 
 .title {
+  font-family: var(--font-display);
   font-size: 28px;
   font-weight: 800;
   text-align: center;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  text-shadow: 0 0 18px rgba(224, 187, 102, 0.35);
 }
 
 .subtitle {
@@ -71,14 +75,16 @@ body {
 
 .btn {
   appearance: none;
-  border: none;
+  border: 1.5px solid var(--card-border);
   border-radius: 16px;
   padding: 16px 20px;
+  font-family: var(--font-display);
   font-size: 17px;
   font-weight: 700;
-  color: white;
-  background: linear-gradient(135deg, var(--accent), #4a63d6);
-  box-shadow: 0 6px 18px rgba(108, 140, 255, 0.35);
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  background: linear-gradient(160deg, #1c2542, #0d1128);
+  box-shadow: 0 0 0 1px rgba(201, 162, 74, 0.15) inset, 0 6px 18px rgba(0, 0, 0, 0.45);
   cursor: pointer;
   transition: transform 0.08s ease;
 }
@@ -95,6 +101,7 @@ body {
 }
 
 .btn.danger {
+  color: #ffe3e9;
   background: linear-gradient(135deg, var(--danger), #b3324a);
   box-shadow: 0 6px 18px rgba(255, 77, 109, 0.3);
 }
@@ -726,8 +733,10 @@ button.command-cell:active {
 }
 
 .result-title {
+  font-family: var(--font-display);
   font-size: 32px;
   font-weight: 900;
+  letter-spacing: 0.04em;
 }
 
 .result-title.win { color: var(--success); }
@@ -895,8 +904,10 @@ canvas.hidden-canvas {
 }
 
 .popup-title {
+  font-family: var(--font-display);
   font-size: 17px;
   font-weight: 800;
+  color: var(--accent);
   margin-bottom: 10px;
 }
 
