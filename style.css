@@ -302,6 +302,10 @@ body {
   border-radius: 10px;
   padding: 8px 4px;
   text-align: center;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
 }
 
 .command-cell .face {
@@ -344,6 +348,16 @@ body {
   color: #b79bff;
 }
 
+.status-badge.accel {
+  background: rgba(255, 209, 102, 0.18);
+  color: #ffd166;
+}
+
+.status-badge.combo {
+  background: rgba(255, 123, 209, 0.18);
+  color: #ff7bd1;
+}
+
 .table-toggle-row {
   display: flex;
   gap: 10px;
@@ -383,6 +397,11 @@ body {
   border-radius: 18px;
   padding: 14px 8px;
   transition: box-shadow 0.3s ease, border-color 0.3s ease;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
 }
 
 .char-avatar-lg {
@@ -473,10 +492,26 @@ body {
   text-align: center;
   cursor: pointer;
   color: var(--text);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
 }
 
 .act-card:active {
   transform: scale(0.96);
+}
+
+.act-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(108, 140, 255, 0.4);
+  background: rgba(108, 140, 255, 0.12);
+}
+
+.eff-speed-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffd166;
 }
 
 .act-card.small {
@@ -770,4 +805,73 @@ canvas.hidden-canvas {
   font-weight: 800;
   padding: 2px 5px;
   border-radius: 6px;
+}
+
+/* --- Ready画面のセクション --- */
+.ready-section {
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  padding: 12px;
+  background: rgba(255,255,255,0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ready-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ready-section-header .section-label {
+  margin-bottom: 0;
+}
+
+.ready-section-header .link-btn {
+  padding: 4px 0;
+  font-size: 12px;
+}
+
+/* --- 詳細ポップアップ --- */
+.popup-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 1000;
+}
+
+.popup-overlay[hidden] {
+  display: none;
+}
+
+.popup-box {
+  background: var(--bg-2);
+  border: 1px solid var(--card-border);
+  border-radius: 18px;
+  padding: 20px;
+  max-width: 320px;
+  width: 100%;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+}
+
+.popup-title {
+  font-size: 17px;
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+
+.popup-body {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-dim);
+  margin-bottom: 16px;
+}
+
+.popup-body div {
+  margin-bottom: 4px;
 }

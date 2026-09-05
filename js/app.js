@@ -55,6 +55,145 @@ function mediaDevicesAvailable() {
   return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
 }
 
+// ---------- 長押し検出・詳細ポップアップ ----------
+
+// onTap: 通常タップ時、onHold: 長押し(holdMs経過)時に呼ばれる。
+// クリックイベントには頼らず pointerdown/up 自体でタップと長押しを判定する。
+function bindTapHold(el, { onTap, onHold, holdMs = 500 } = {}) {
+  if (!el) return;
+  let timer = null;
+  let held = false;
+  let pointerHandledAt = 0;
+  const clearTimer = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  };
+  el.addEventListener('pointerdown', () => {
+    held = false;
+    clearTimer();
+    if (onHold) {
+      timer = setTimeout(() => {
+        held = true;
+        timer = null;
+        onHold();
+      }, holdMs);
+    }
+  });
+  el.addEventListener('pointerup', () => {
+    clearTimer();
+    if (!held && onTap) onTap();
+    pointerHandledAt = Date.now();
+    held = false;
+  });
+  el.addEventListener('pointerleave', clearTimer);
+  el.addEventListener('pointercancel', clearTimer);
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
+  // キーボード操作(Enter/Space)や pointer イベント非対応環境向けのフォールバック。
+  // 直前の pointerup で既に処理済みの場合は click の二重発火を無視する。
+  el.addEventListener('click', () => {
+    if (Date.now() - pointerHandledAt < 400) return;
+    if (onTap) onTap();
+  });
+}
+
+function showPopup(title, bodyHtml) {
+  document.getElementById('popupTitle').textContent = title;
+  document.getElementById('popupBody').innerHTML = bodyHtml;
+  document.getElementById('popupOverlay').hidden = false;
+}
+
+function hidePopup() {
+  document.getElementById('popupOverlay').hidden = true;
+}
+
+function setupPopup() {
+  document.getElementById('popupCloseBtn').onclick = hidePopup;
+  document.getElementById('popupOverlay').addEventListener('click', (e) => {
+    if (e.target.id === 'popupOverlay') hidePopup();
+  });
+}
+
+// スキルカードの効果説明(実際の数値を反映)
+function skillEffectDescription(card) {
+  const n = card.n;
+  switch (card.effectType) {
+    case EFFECT_TYPES.CHARGE:
+      return `このラウンド中、攻撃力が+${n}上昇し、スピードが${n / 2}低下します。`;
+    case EFFECT_TYPES.GUARD:
+      return `このラウンドで攻撃できなかった場合、受けるダメージが${n}倍(${Math.round(n * 100)}%)に軽減されます。`;
+    case EFFECT_TYPES.ACCEL:
+      return 'このラウンドのスピードが0になる代わりに、次のラウンド以降ずっとスピードが+1されます(このバトル中永続・重ねがけ可能)。';
+    case EFFECT_TYPES.AGILE:
+      return `このラウンド中、スピードが+${n}上昇し、攻撃力が-${n * 2}低下します。`;
+    default:
+      return '';
+  }
+}
+
+function showSkillCardPopup(card) {
+  showPopup(card.label, skillEffectDescription(card));
+}
+
+// コマンドの効果説明
+function commandDescription(cmd) {
+  switch (cmd) {
+    case COMMAND_TYPES.ATTACK:
+      return '攻撃力と同じ量のダメージを相手に与えます。';
+    case COMMAND_TYPES.GUARD_STRIKE:
+      return '攻撃力の0.5倍のダメージを相手に与えます。';
+    case COMMAND_TYPES.CRITICAL:
+      return '攻撃力の2倍のダメージを相手に与えます。(Sコマンド)';
+    case COMMAND_TYPES.MISS:
+      return 'このラウンドは何も起こりません。';
+    case COMMAND_TYPES.COMBO:
+      return '攻撃力×コンボ倍率のダメージを与えます。使うたびに倍率が+0.3されます(このバトル中永続・重ねがけ可能)。(Sコマンド)';
+    case COMMAND_TYPES.HEAL:
+      return '攻撃力の0.5倍分、自分のHPを回復します。';
+    case COMMAND_TYPES.POISON:
+      return '攻撃力の0.5倍のダメージを与え、50%の確率で相手を毒状態にします。毒状態は毎ラウンド終了時、残りHPの10%のダメージを受けます。(Sコマンド)';
+    case COMMAND_TYPES.COLLAPSE:
+      return '相手の最大HPの10%のダメージを与えます。直後にHPが最大の20%以下なら、即座に0になります。';
+    default:
+      return '';
+  }
+}
+
+function showCommandPopup(cmd) {
+  showPopup(cmd, commandDescription(cmd));
+}
+
+// キャラクターの永続効果一覧をポップアップで表示
+function showCharacterEffectsPopup(character) {
+  const lines = [];
+  if ((character.permanentSpeedBonus || 0) > 0) {
+    lines.push(`⚡ アクセル効果: スピードが永続で+${character.permanentSpeedBonus}されています`);
+  }
+  if ((character.comboMultiplier || 1) > 1) {
+    lines.push(`🔗 コンボ倍率: 次に「コンボ」を使うと攻撃力×${character.comboMultiplier.toFixed(1)}`);
+  }
+  if (character.poisoned) {
+    lines.push('🧪 毒状態: ラウンド終了時に残りHPの10%のダメージを受けます');
+  }
+  const body = lines.length > 0
+    ? lines.map((l) => `<div>${escapeHtml(l)}</div>`).join('')
+    : '<div>現在、永続効果はありません。</div>';
+  showPopup(`${character.name}の状態`, body);
+}
+
+// コマンド表内のセルに長押しポップアップを仕込む(data-command が無いセル=伏せられた面は対象外)
+function bindCommandTablePopups(root) {
+  (root || document).querySelectorAll('.command-cell[data-command]').forEach((cell) => {
+    bindTapHold(cell, { onHold: () => showCommandPopup(cell.dataset.command) });
+  });
+}
+
+// キャラクターカード(vs-char-card)に長押しポップアップを仕込む
+function bindCharacterEffectsPopup(el, character) {
+  bindTapHold(el, { onHold: () => showCharacterEffectsPopup(character) });
+}
+
 // ---------- render dispatcher ----------
 
 function render() {
@@ -80,6 +219,10 @@ function render() {
     case 'selectCommandTable':
       app.innerHTML = renderSelectCommandTable();
       bindSelectCommandTable();
+      break;
+    case 'selectWildcardSet':
+      app.innerHTML = renderSelectWildcardSet();
+      bindSelectWildcardSet();
       break;
     case 'selectSpeedCards':
       app.innerHTML = renderSelectSpeedCards();
@@ -338,8 +481,9 @@ function bindEnterName() {
 function finalizePlayerCharacter(dataUrl) {
   const name = (state.playerName && state.playerName.trim()) || 'あなた';
   state.playerCharacter = generateCharacterFromText(state.qrText, name, dataUrl);
-  state.playerCharacter.speedCardPool = generateSpeedCardPool(state.qrText, name);
-  state.playerCharacter.skillCardPool = generateSkillCardPool(state.qrText, name);
+  state.playerCharacter.speedCardBase = generateSpeedCardBase(state.qrText, name);
+  state.playerCharacter.skillCardBase = generateSkillCardBase(state.qrText, name);
+  state.playerCharacter.wildcardSetOptions = generateWildcardSetOptions(name);
   state.screen = 'selectCommandTable';
   render();
 }
@@ -364,7 +508,7 @@ function renderSelectCommandTable() {
         <div></div>
       </div>
       <div class="title" style="font-size:20px;">コマンド表を選ぶ</div>
-      <div class="subtitle">3つの候補から、バトルで使うコマンド表を1つ選んでください</div>
+      <div class="subtitle">3つの候補から、バトルで使うコマンド表を1つ選んでください(コマンドを長押しすると説明が見られます)</div>
       ${optionsHtml}
     </div>
   `;
@@ -379,13 +523,69 @@ function bindSelectCommandTable() {
     btn.onclick = () => {
       const idx = Number(btn.dataset.optionIndex);
       state.playerCharacter.commandTable = state.playerCharacter.commandTableOptions[idx];
-      // デフォルトでは完全ランダムのワイルドカードを除いたカード(QR由来)を選択済みにしておく
-      state.speedCardSelection = new Set(
-        state.playerCharacter.speedCardPool.filter((c) => !c.isWild).map((c) => c.id)
-      );
+      state.screen = 'selectWildcardSet';
+      render();
+    };
+  });
+  bindCommandTablePopups();
+}
+
+// ---------- ワイルドカードセット選択画面 ----------
+
+function renderSelectWildcardSet() {
+  const options = state.playerCharacter.wildcardSetOptions;
+  const optionsHtml = options
+    .map((set, i) => `
+      <div class="table-option">
+        <div class="section-label">セット ${i + 1}</div>
+        <div class="act-card-grid">
+          ${set.speedWilds.map((c) => renderSpeedCardFace(c, true)).join('')}
+          ${set.skillWilds.map((c) => renderSkillCardFace(c, true)).join('')}
+        </div>
+        <button class="btn secondary block" data-set-index="${i}">これに決める</button>
+      </div>
+    `)
+    .join('');
+  return `
+    <div class="screen">
+      <div class="top-bar">
+        <button class="icon-btn" id="backBtn">← もどる</button>
+        <div></div>
+      </div>
+      <div class="title" style="font-size:20px;">ワイルドカードセットを選ぶ</div>
+      <div class="subtitle">完全ランダムな「スピード2枚+スキル3枚」のセットが3つ。1つ選ぶとカード候補に追加されます</div>
+      ${optionsHtml}
+    </div>
+  `;
+}
+
+function bindSelectWildcardSet() {
+  document.getElementById('backBtn').onclick = () => {
+    state.screen = 'selectCommandTable';
+    render();
+  };
+  document.querySelectorAll('[data-set-index]').forEach((btn) => {
+    btn.onclick = () => {
+      const idx = Number(btn.dataset.setIndex);
+      const chosen = state.playerCharacter.wildcardSetOptions[idx];
+      state.playerCharacter.speedCardPool = state.playerCharacter.speedCardBase.concat(chosen.speedWilds);
+      state.playerCharacter.skillCardPool = state.playerCharacter.skillCardBase.concat(chosen.skillWilds);
+      state.speedCardSelection = new Set(state.playerCharacter.speedCardBase.map((c) => c.id));
       state.screen = 'selectSpeedCards';
       render();
     };
+  });
+  document.querySelectorAll('.act-card').forEach((el) => {
+    // このカードグリッドは表示専用(選択操作は無い)なのでスキルカードの長押しのみ有効にする
+  });
+  bindSkillCardPopupsIn(document, state.playerCharacter.wildcardSetOptions.flatMap((s) => s.skillWilds));
+}
+
+// カード配列を渡し、それぞれの id に対応する .act-card 要素へ長押しポップアップを仕込む
+function bindSkillCardPopupsIn(root, cards) {
+  cards.forEach((card) => {
+    const el = root.querySelector(`[data-card-id="${card.id}"]`);
+    if (el) bindTapHold(el, { onHold: () => showSkillCardPopup(card) });
   });
 }
 
@@ -423,21 +623,23 @@ function renderSelectSpeedCards() {
 
 function bindSelectSpeedCards() {
   document.getElementById('backBtn').onclick = () => {
-    state.screen = 'selectCommandTable';
+    state.screen = 'selectWildcardSet';
     render();
   };
   document.querySelectorAll('.select-grid .act-card').forEach((btn) => {
-    btn.onclick = () => {
-      const id = btn.dataset.cardId;
-      const selection = state.speedCardSelection;
-      if (selection.has(id)) {
-        selection.delete(id);
-      } else {
-        if (selection.size >= 10) return;
-        selection.add(id);
-      }
-      render();
-    };
+    bindTapHold(btn, {
+      onTap: () => {
+        const id = btn.dataset.cardId;
+        const selection = state.speedCardSelection;
+        if (selection.has(id)) {
+          selection.delete(id);
+        } else {
+          if (selection.size >= 10) return;
+          selection.add(id);
+        }
+        render();
+      },
+    });
   });
   document.getElementById('confirmBtn').onclick = () => {
     if (state.speedCardSelection.size !== 10) return;
@@ -473,7 +675,7 @@ function renderSelectSkillCards() {
         <div></div>
       </div>
       <div class="title" style="font-size:20px;">スキルカードを選ぶ</div>
-      <div class="subtitle">9枚(うちWILDの3枚は完全ランダム)の中から、実際に使う6枚を選んでください</div>
+      <div class="subtitle">9枚(うちWILDの3枚は完全ランダム)の中から、実際に使う6枚を選んでください(長押しで効果説明)</div>
       <div class="selection-count">選択中: ${selection.size} / 6</div>
       <div class="act-card-grid select-grid">${cardsHtml}</div>
       <div class="spacer"></div>
@@ -487,18 +689,23 @@ function bindSelectSkillCards() {
     state.screen = 'selectSpeedCards';
     render();
   };
+  const pool = state.playerCharacter.skillCardPool;
   document.querySelectorAll('.select-grid .act-card').forEach((btn) => {
-    btn.onclick = () => {
-      const id = btn.dataset.cardId;
-      const selection = state.skillCardSelection;
-      if (selection.has(id)) {
-        selection.delete(id);
-      } else {
-        if (selection.size >= 6) return;
-        selection.add(id);
-      }
-      render();
-    };
+    const card = pool.find((c) => c.id === btn.dataset.cardId);
+    bindTapHold(btn, {
+      onTap: () => {
+        const id = btn.dataset.cardId;
+        const selection = state.skillCardSelection;
+        if (selection.has(id)) {
+          selection.delete(id);
+        } else {
+          if (selection.size >= 6) return;
+          selection.add(id);
+        }
+        render();
+      },
+      onHold: card ? () => showSkillCardPopup(card) : undefined,
+    });
   });
   document.getElementById('confirmBtn').onclick = () => {
     if (state.skillCardSelection.size !== 6) return;
@@ -510,6 +717,14 @@ function bindSelectSkillCards() {
 
 // ---------- キャラクターカード共通表示 ----------
 
+function renderStatusBadges(char) {
+  const badges = [];
+  if (char.poisoned) badges.push('<span class="status-badge poison">🧪毒</span>');
+  if ((char.permanentSpeedBonus || 0) > 0) badges.push(`<span class="status-badge accel">⚡+${char.permanentSpeedBonus}</span>`);
+  if ((char.comboMultiplier || 1) > 1) badges.push(`<span class="status-badge combo">🔗×${char.comboMultiplier.toFixed(1)}</span>`);
+  return badges.join(' ');
+}
+
 function renderCharacterCard(char, compact) {
   const avatar = char.image
     ? `<img class="char-avatar" src="${char.image}" alt="${escapeHtml(char.name)}" />`
@@ -519,7 +734,7 @@ function renderCharacterCard(char, compact) {
     <div class="char-card ${compact ? 'compact' : ''}">
       ${avatar}
       <div class="char-info">
-        <div class="char-name">${escapeHtml(char.name)}${char.poisoned ? ' <span class="status-badge poison">🧪毒</span>' : ''}</div>
+        <div class="char-name">${escapeHtml(char.name)} ${renderStatusBadges(char)}</div>
         <div class="stat-row"><span>HP ${char.hp}/${char.maxHp}</span><span>攻撃力 ${char.atk}</span></div>
         <div class="hp-bar-track"><div class="hp-bar-fill ${hpPct <= 30 ? 'low' : ''}" style="width:${hpPct}%"></div></div>
       </div>
@@ -528,20 +743,29 @@ function renderCharacterCard(char, compact) {
 }
 
 // 対戦画面用: 左右に並べて表示する縦型カード(写真は大きめ)。poisonHit が true の間、紫のエフェクトを付ける
-function renderVsCharacterCard(char, poisonHit) {
+function renderVsCharacterCard(char, poisonHit, side) {
   const avatar = char.image
     ? `<img class="char-avatar-lg" src="${char.image}" alt="${escapeHtml(char.name)}" />`
     : `<div class="char-avatar-lg">${char.name === 'CPU' ? '🤖' : '🧑'}</div>`;
   const hpPct = Math.max(0, Math.round((char.hp / char.maxHp) * 100));
   return `
-    <div class="vs-char-card ${poisonHit ? 'poison-hit' : ''}">
+    <div class="vs-char-card ${poisonHit ? 'poison-hit' : ''}" data-char-side="${side}">
       ${avatar}
-      <div class="char-name">${escapeHtml(char.name)}${char.poisoned ? ' <span class="status-badge poison">🧪毒</span>' : ''}</div>
+      <div class="char-name">${escapeHtml(char.name)}</div>
+      <div class="badge-row">${renderStatusBadges(char)}</div>
       <div class="stat-row"><span>HP ${char.hp}/${char.maxHp}</span></div>
       <div class="stat-row"><span>攻撃力 ${char.atk}</span></div>
       <div class="hp-bar-track"><div class="hp-bar-fill ${hpPct <= 30 ? 'low' : ''}" style="width:${hpPct}%"></div></div>
     </div>
   `;
+}
+
+// vs-char-card に長押しポップアップを仕込む(player/cpu のキャラクターオブジェクトを渡す)
+function bindVsCharacterPopups(root, playerChar, cpuChar) {
+  const playerEl = root.querySelector('.vs-char-card[data-char-side="player"]');
+  const cpuEl = root.querySelector('.vs-char-card[data-char-side="cpu"]');
+  if (playerEl) bindCharacterEffectsPopup(playerEl, playerChar);
+  if (cpuEl) bindCharacterEffectsPopup(cpuEl, cpuChar);
 }
 
 // revealed を渡すと、そのインデックス(出目-1)が含まれていない面は「？」で伏せて表示する
@@ -560,7 +784,7 @@ function renderCommandTable(table, revealed) {
       else if (cmd === COMMAND_TYPES.POISON) cls = 'poison';
       else if (cmd === COMMAND_TYPES.COLLAPSE) cls = 'collapse';
       const sCls = isSCommand(cmd) ? ' s-command' : '';
-      return `<div class="command-cell ${cls}${sCls}"><div class="face">出目 ${i + 1}</div><div class="cmd">${cmd}</div></div>`;
+      return `<div class="command-cell ${cls}${sCls}" data-command="${escapeHtml(cmd)}"><div class="face">出目 ${i + 1}</div><div class="cmd">${cmd}</div></div>`;
     })
     .join('');
   return `<div class="command-table">${cells}</div>`;
@@ -611,11 +835,11 @@ function effectVisualClass(cmd) {
 }
 
 function renderSpeedCardFace(card, small) {
-  return `<div class="act-card speed-card ${small ? 'small' : ''}"><div class="act-card-speed">SPD ${card.speed}</div></div>`;
+  return `<div class="act-card speed-card ${small ? 'small' : ''}" data-card-id="${card.id}"><div class="act-card-speed">SPD ${card.speed}</div></div>`;
 }
 
 function renderSkillCardFace(card, small) {
-  return `<div class="act-card ${small ? 'small' : ''} ${effectClass(card.effectType)}"><div class="act-card-label">${escapeHtml(card.label)}</div></div>`;
+  return `<div class="act-card ${small ? 'small' : ''} ${effectClass(card.effectType)}" data-card-id="${card.id}"><div class="act-card-label">${escapeHtml(card.label)}</div></div>`;
 }
 
 function renderCardBack(small) {
@@ -633,11 +857,11 @@ function renderPreview() {
       </div>
       <div class="title" style="font-size:20px;">キャラクター確認</div>
       ${renderCharacterCard(state.playerCharacter, false)}
-      <div class="section-label">コマンド表(サイコロの目 → 行動)</div>
+      <div class="section-label">コマンド表(サイコロの目 → 行動・長押しで説明)</div>
       ${renderCommandTable(state.playerCharacter.commandTable)}
       <div class="section-label">選んだスピードカード(10枚)</div>
       <div class="act-card-grid">${state.playerCharacter.speedCards.map((c) => renderSpeedCardFace(c, true)).join('')}</div>
-      <div class="section-label">選んだスキルカード(6枚)</div>
+      <div class="section-label">選んだスキルカード(6枚・長押しで説明)</div>
       <div class="act-card-grid">${state.playerCharacter.skillCards.map((c) => renderSkillCardFace(c, true)).join('')}</div>
       <div class="spacer"></div>
       <button class="btn block" id="battleStartBtn">バトル開始</button>
@@ -660,31 +884,55 @@ function bindPreview() {
     state.screen = 'ready';
     render();
   };
+  bindCommandTablePopups();
+  bindSkillCardPopupsIn(document, state.playerCharacter.skillCards);
 }
 
 // ---------- 準備(Ready?)画面 ----------
 
 function renderReady() {
   return `
-    <div class="screen result-screen">
-      <div class="title">Ready?</div>
+    <div class="screen">
+      <div class="title" style="text-align:center;">Ready?</div>
       <div class="vs-arena">
-        ${renderVsCharacterCard(state.playerCharacter, false)}
+        ${renderVsCharacterCard(state.playerCharacter, false, 'player')}
         <div class="vs-label">VS</div>
-        ${renderVsCharacterCard(state.cpuCharacter, false)}
+        ${renderVsCharacterCard(state.cpuCharacter, false, 'cpu')}
+      </div>
+      <div class="ready-section">
+        <div class="ready-section-header">
+          <div class="section-label">コマンド表(長押しで説明)</div>
+          <button class="link-btn" data-edit-target="selectCommandTable">変更する</button>
+        </div>
+        ${renderCommandTable(state.playerCharacter.commandTable)}
+      </div>
+      <div class="ready-section">
+        <div class="ready-section-header">
+          <div class="section-label">スピードカード(10枚)</div>
+          <button class="link-btn" data-edit-target="selectSpeedCards">変更する</button>
+        </div>
+        <div class="act-card-grid">${state.playerCharacter.speedCards.map((c) => renderSpeedCardFace(c, true)).join('')}</div>
+      </div>
+      <div class="ready-section">
+        <div class="ready-section-header">
+          <div class="section-label">スキルカード(6枚・長押しで説明)</div>
+          <button class="link-btn" data-edit-target="selectSkillCards">変更する</button>
+        </div>
+        <div class="act-card-grid">${state.playerCharacter.skillCards.map((c) => renderSkillCardFace(c, true)).join('')}</div>
       </div>
       <div class="spacer"></div>
-      <button class="btn secondary block" id="editBtn">← コマンド・カードを変更する</button>
       <button class="btn block" id="fightStartBtn">たたかう！</button>
     </div>
   `;
 }
 
 function bindReady() {
-  document.getElementById('editBtn').onclick = () => {
-    state.screen = 'selectCommandTable';
-    render();
-  };
+  document.querySelectorAll('[data-edit-target]').forEach((btn) => {
+    btn.onclick = () => {
+      state.screen = btn.dataset.editTarget;
+      render();
+    };
+  });
   document.getElementById('fightStartBtn').onclick = () => {
     state.battlePlayer = { ...state.playerCharacter };
     state.battleCpu = { ...state.cpuCharacter };
@@ -700,6 +948,8 @@ function bindReady() {
       cpuSkillCard: null,
       selectedSpeedCardId: null,
       selectedSkillCardId: null,
+      playerEffSpeed: null,
+      cpuEffSpeed: null,
       diceValue: null,
       message: '',
       round: 1,
@@ -725,6 +975,9 @@ function bindReady() {
     state.screen = 'battle';
     render();
   };
+  bindCommandTablePopups();
+  bindSkillCardPopupsIn(document, state.playerCharacter.skillCards);
+  bindVsCharacterPopups(document, state.playerCharacter, state.cpuCharacter);
 }
 
 // ---------- バトル画面 ----------
@@ -735,9 +988,9 @@ function renderBattle() {
   return `
     <div class="screen">
       <div class="vs-arena">
-        ${renderVsCharacterCard(state.battlePlayer, b.poisonHitSides.includes('player'))}
+        ${renderVsCharacterCard(state.battlePlayer, b.poisonHitSides.includes('player'), 'player')}
         <div class="vs-label">VS</div>
-        ${renderVsCharacterCard(state.battleCpu, b.poisonHitSides.includes('cpu'))}
+        ${renderVsCharacterCard(state.battleCpu, b.poisonHitSides.includes('cpu'), 'cpu')}
       </div>
       <div class="round-label">ラウンド ${b.round}</div>
       <div class="battle-arena"${arenaStyle}>
@@ -748,8 +1001,8 @@ function renderBattle() {
         <button class="btn secondary" id="togglePlayerTable">${b.showPlayerTable ? '自分のコマンドを隠す' : '自分のコマンドを見る'}</button>
         <button class="btn secondary" id="toggleCpuTable">${b.showCpuTable ? '相手のコマンドを隠す' : '相手のコマンドを見る'}</button>
       </div>
-      ${b.showPlayerTable ? `<div class="section-label">あなたのコマンド表</div>${renderCommandTable(state.battlePlayer.commandTable)}` : ''}
-      ${b.showCpuTable ? `<div class="section-label">CPUのコマンド表(使われた面だけ公開)</div>${renderCommandTable(state.battleCpu.commandTable, b.cpuRevealed)}` : ''}
+      ${b.showPlayerTable ? `<div class="section-label">あなたのコマンド表(長押しで説明)</div>${renderCommandTable(state.battlePlayer.commandTable)}` : ''}
+      ${b.showCpuTable ? `<div class="section-label">CPUのコマンド表(使われた面だけ公開・長押しで説明)</div>${renderCommandTable(state.battleCpu.commandTable, b.cpuRevealed)}` : ''}
       <div class="battle-log">${renderLog(b.log)}</div>
     </div>
   `;
@@ -768,10 +1021,13 @@ function renderBattleControls(b) {
   return '<div class="subtitle">勝負中<span class="loading-dot">…</span></div>';
 }
 
-function renderRoundCardStack(speedCard, skillCard) {
+// effSpeed が分かっていて元のスピードと違う場合、実効スピードを併記する
+function renderRoundCardStack(speedCard, skillCard, effSpeed) {
+  const showEff = effSpeed !== null && effSpeed !== undefined && effSpeed !== speedCard.speed;
   return `
     <div class="round-card-stack">
       ${renderSpeedCardFace(speedCard, true)}
+      ${showEff ? `<div class="eff-speed-badge">→ 実効SPD ${effSpeed}</div>` : ''}
       ${skillCard ? renderSkillCardFace(skillCard, true) : ''}
     </div>
   `;
@@ -785,14 +1041,14 @@ function renderArenaContent(b) {
   if (b.playerSpeedCard && b.cpuSpeedCard) {
     html += `
       <div class="hands-row">
-        <div>${renderRoundCardStack(b.playerSpeedCard, b.playerSkillCard)}<div class="hand-label">あなた</div></div>
-        <div>${renderRoundCardStack(b.cpuSpeedCard, b.cpuSkillCard)}<div class="hand-label">CPU</div></div>
+        <div>${renderRoundCardStack(b.playerSpeedCard, b.playerSkillCard, b.playerEffSpeed)}<div class="hand-label">あなた</div></div>
+        <div>${renderRoundCardStack(b.cpuSpeedCard, b.cpuSkillCard, b.cpuEffSpeed)}<div class="hand-label">CPU</div></div>
       </div>
     `;
   } else if (b.playerSpeedCard) {
     html += `
       <div class="hands-row">
-        <div>${renderRoundCardStack(b.playerSpeedCard, b.playerSkillCard)}<div class="hand-label">あなた</div></div>
+        <div>${renderRoundCardStack(b.playerSpeedCard, b.playerSkillCard, b.playerEffSpeed)}<div class="hand-label">あなた</div></div>
         <div>${renderCardBack(true)}<div class="hand-label">CPU</div></div>
       </div>
     `;
@@ -824,7 +1080,7 @@ function renderRoundCardPicker(b) {
   return `
     <div class="section-label">スピードカード(1枚必須)</div>
     <div class="card-hand-row speed-pick">${speedHtml}</div>
-    <div class="section-label">スキルカード(任意・タップで選択/解除)</div>
+    <div class="section-label">スキルカード(任意・タップで選択/解除・長押しで説明)</div>
     <div class="card-hand-row skill-pick">${skillHtml}</div>
     <div class="deck-count">スピード 山札${state.playerSpeedDeck.deck.length}・捨て札${state.playerSpeedDeck.discard.length} ｜ スキル 山札${state.playerSkillDeck.deck.length}・捨て札${state.playerSkillDeck.discard.length}</div>
     <button class="btn block" id="playCardsBtn" ${b.selectedSpeedCardId ? '' : 'disabled'}>カードを出す</button>
@@ -836,20 +1092,28 @@ function renderLog(log) {
 }
 
 function initBattle() {
+  const speedHand = state.playerSpeedDeck.hand;
   document.querySelectorAll('.speed-pick .act-card').forEach((btn) => {
-    btn.onclick = () => {
-      if (state.battle.busy) return;
-      state.battle.selectedSpeedCardId = btn.dataset.speedCardId;
-      render();
-    };
+    bindTapHold(btn, {
+      onTap: () => {
+        if (state.battle.busy) return;
+        state.battle.selectedSpeedCardId = btn.dataset.speedCardId;
+        render();
+      },
+    });
   });
+  const skillHand = state.playerSkillDeck.hand;
   document.querySelectorAll('.skill-pick .act-card').forEach((btn) => {
-    btn.onclick = () => {
-      if (state.battle.busy) return;
-      const id = btn.dataset.skillCardId;
-      state.battle.selectedSkillCardId = state.battle.selectedSkillCardId === id ? null : id;
-      render();
-    };
+    const card = skillHand.find((c) => c.id === btn.dataset.skillCardId);
+    bindTapHold(btn, {
+      onTap: () => {
+        if (state.battle.busy) return;
+        const id = btn.dataset.skillCardId;
+        state.battle.selectedSkillCardId = state.battle.selectedSkillCardId === id ? null : id;
+        render();
+      },
+      onHold: card ? () => showSkillCardPopup(card) : undefined,
+    });
   });
   const playCardsBtn = document.getElementById('playCardsBtn');
   if (playCardsBtn) {
@@ -876,6 +1140,8 @@ function initBattle() {
       render();
     };
   }
+  bindCommandTablePopups();
+  bindVsCharacterPopups(document, state.battlePlayer, state.battleCpu);
 }
 
 function addLog(msg) {
@@ -950,6 +1216,8 @@ async function onPlayerPlayCards() {
   b.commandEffect = null;
   b.poisonMessages = [];
   b.poisonHitSides = [];
+  b.playerEffSpeed = null;
+  b.cpuEffSpeed = null;
 
   const playerSpeedCard = playCard(state.playerSpeedDeck, b.selectedSpeedCardId);
   const playerSkillCard = b.selectedSkillCardId ? playCard(state.playerSkillDeck, b.selectedSkillCardId) : null;
@@ -991,18 +1259,21 @@ async function onPlayerPlayCards() {
   applySkillCardEffect(playerSkillCard, 'player');
   applySkillCardEffect(cpuSkillCard, 'cpu');
 
-  if (playerSkillCard || cpuSkillCard) {
-    b.message = 'スキルカードの効果が発動！';
-    render();
-    await wait(800);
-  }
-
   const playerEffSpeed = b.playerAccel
     ? 0
     : playerSpeedCard.speed + (state.battlePlayer.permanentSpeedBonus || 0) + b.playerSpeedDelta;
   const cpuEffSpeed = b.cpuAccel
     ? 0
     : cpuSpeedCard.speed + (state.battleCpu.permanentSpeedBonus || 0) + b.cpuSpeedDelta;
+  b.playerEffSpeed = playerEffSpeed;
+  b.cpuEffSpeed = cpuEffSpeed;
+
+  if (playerSkillCard || cpuSkillCard) {
+    // スキルの効果を加味した実効スピードをカード表示に反映してから見せる
+    b.message = 'スキルカードの効果が発動！';
+    render();
+    await wait(900);
+  }
 
   if (playerEffSpeed === cpuEffSpeed) {
     addLog(`スピード${playerEffSpeed}で同速！ このラウンドはどちらも攻撃できない`);
@@ -1014,7 +1285,7 @@ async function onPlayerPlayCards() {
   const winnerIsPlayer = playerEffSpeed > cpuEffSpeed;
   b.arenaColor = winnerIsPlayer ? '#239dda' : '#e60012';
   addLog(`スピード勝負: ${winnerIsPlayer ? 'あなた' : 'CPU'}の勝ち！ (${playerEffSpeed} vs ${cpuEffSpeed})`);
-  b.message = winnerIsPlayer ? 'スピード勝ち！ あなたの攻撃！' : 'スピード負け… CPUの攻撃！';
+  b.message = winnerIsPlayer ? `スピード勝ち！(${playerEffSpeed} vs ${cpuEffSpeed}) あなたの攻撃！` : `スピード負け…(${playerEffSpeed} vs ${cpuEffSpeed}) CPUの攻撃！`;
   render();
   await wait(700);
 
@@ -1162,6 +1433,8 @@ function advanceToNextRound() {
   b.cpuSpeedCard = null;
   b.playerSkillCard = null;
   b.cpuSkillCard = null;
+  b.playerEffSpeed = null;
+  b.cpuEffSpeed = null;
   b.diceValue = null;
   b.message = '';
   b.arenaColor = null;
@@ -1209,4 +1482,5 @@ function bindResult() {
 
 // ---------- 起動 ----------
 
+setupPopup();
 render();

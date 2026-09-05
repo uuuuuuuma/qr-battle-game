@@ -10,9 +10,10 @@
 // 3. サイコロの目(1〜6)それぞれにコマンドを割り当てたコマンド表を3パターン作り、
 //    プレイヤーはその中から使用する1つを選ぶ。「クリティカル」「コンボ」「ポイズン」は
 //    「Sコマンド」と呼び、各コマンド表に必ず1つ以上入るようにする
-// 4. キャラクター生成後、同じQR文字列から「スピードカード」10枚・「スキルカード」6枚を生成し、
-//    さらに完全ランダム(QRに依存しない)なスピードカード2枚・スキルカード3枚を追加した中から、
-//    プレイヤーが実際に使うスピードカード10枚・スキルカード6枚を選ぶ
+// 4. キャラクター生成後、同じQR文字列から「スピードカード」10枚・「スキルカード」6枚を生成する。
+//    さらに完全ランダム(QRに依存しない)な「スピードカード2枚+スキルカード3枚」のワイルドセットを
+//    3セット用意し、プレイヤーはその中から1セットを選んで自分の候補に追加できる。
+//    最終的に(10+2)枚のスピードカードから10枚、(6+3)枚のスキルカードから6枚を選んで使用する。
 
 const COMMAND_TYPES = {
   ATTACK: 'こうげき',
@@ -104,10 +105,13 @@ function generateCharacterFromText(text, name, imageDataUrl) {
     atk,
     commandTableOptions,
     commandTable: null, // 3択の中から選んだらセットされる
-    speedCardPool: [], // 12枚の候補(生成直後に入る)
-    speedCards: [], // 12枚のうちプレイヤーが選んだ10枚
-    skillCardPool: [], // 9枚の候補(生成直後に入る)
-    skillCards: [], // 9枚のうちプレイヤーが選んだ6枚
+    speedCardBase: [], // QR由来のスピードカード10枚
+    skillCardBase: [], // QR由来のスキルカード6枚
+    wildcardSetOptions: [], // 完全ランダムな「スピード2枚+スキル3枚」のセット3つ
+    speedCardPool: [], // ワイルドセット確定後にできる候補(base+選んだワイルド)
+    speedCards: [], // 候補のうちプレイヤーが選んだ10枚
+    skillCardPool: [], // ワイルドセット確定後にできる候補(base+選んだワイルド)
+    skillCards: [], // 候補のうちプレイヤーが選んだ6枚
     comboMultiplier: 1, // 「コンボ」を使うたびに+0.3され、ゲーム終了まで持続する
     permanentSpeedBonus: 0, // 「アクセル」を使うたびに+1され、ゲーム終了まで持続する
     poisoned: false,
@@ -120,9 +124,12 @@ function generateCpuCharacter() {
   const seedText = 'CPU-' + Date.now() + '-' + Math.floor(Math.random() * 1000000);
   const cpu = generateCharacterFromText(seedText, 'CPU', null);
   cpu.commandTable = cpu.commandTableOptions[Math.floor(Math.random() * cpu.commandTableOptions.length)];
-  cpu.speedCardPool = generateSpeedCardPool(seedText, 'CPU');
+  cpu.speedCardBase = generateSpeedCardBase(seedText, 'CPU');
+  cpu.skillCardBase = generateSkillCardBase(seedText, 'CPU');
+  const wildSet = generateWildcardSet('CPU', 0); // CPUは1セットだけ生成してそのまま使う
+  cpu.speedCardPool = cpu.speedCardBase.concat(wildSet.speedWilds);
+  cpu.skillCardPool = cpu.skillCardBase.concat(wildSet.skillWilds);
   cpu.speedCards = shuffleArray(cpu.speedCardPool).slice(0, 10); // CPUはランダムに10枚選ぶ
-  cpu.skillCardPool = generateSkillCardPool(seedText, 'CPU');
   cpu.skillCards = shuffleArray(cpu.skillCardPool).slice(0, 6); // CPUはランダムに6枚選ぶ
   return cpu;
 }
@@ -130,10 +137,8 @@ function generateCpuCharacter() {
 // ---------- スピードカード生成 ----------
 // スピード(1〜10)のみを持つカードを10枚生成する(QR由来の疑似乱数)。
 // 少なくとも3枚はスピード7〜10になるようにする。
-// さらに、完全ランダム(QRに依存しないMath.random)なスピードカードを2枚作る。
-// 合計12枚の中から、実際にゲームで使う10枚をプレイヤーが選ぶ。
 
-function generateSpeedCardPool(text, name) {
+function generateSpeedCardBase(text, name) {
   const rand = createSeededRandom(text + '::speed::' + name);
 
   const speeds = [];
@@ -148,26 +153,17 @@ function generateSpeedCardPool(text, name) {
     }
   }
 
-  const baseCards = speeds.map((speed, i) => ({
+  return speeds.map((speed, i) => ({
     id: `${name}-speed-${i}-${speed}`,
     speed,
     isWild: false,
-  }));
-
-  const wildCards = [0, 1].map((i) => {
-    const speed = 1 + Math.floor(Math.random() * 10);
-    return { id: `${name}-speed-wild-${i}-${speed}`, speed, isWild: true };
-  });
-
-  return baseCards.concat(wildCards); // 合計12枚
+  })); // 10枚
 }
 
 // ---------- スキルカード生成 ----------
 // 追加効果(チャージ/受け身/アクセル/身軽)を持つカードを6枚生成する(QR由来の疑似乱数)。
-// さらに、完全ランダムなスキルカードを3枚作る。
-// 合計9枚の中から、実際にゲームで使う6枚をプレイヤーが選ぶ。
 
-function generateSkillCardPool(text, name) {
+function generateSkillCardBase(text, name) {
   const rand = createSeededRandom(text + '::skill::' + name);
   const effectPool = [EFFECT_TYPES.CHARGE, EFFECT_TYPES.GUARD, EFFECT_TYPES.ACCEL, EFFECT_TYPES.AGILE];
 
@@ -183,12 +179,25 @@ function generateSkillCardPool(text, name) {
       isWild: false,
     });
   }
+  return baseCards; // 6枚
+}
 
-  const wildCards = [0, 1, 2].map((i) => {
+// ---------- ワイルドカードセット生成 ----------
+// 完全ランダム(QRに依存しないMath.random)な「スピードカード2枚+スキルカード3枚」の
+// セットを作る。プレイヤーには3セット提示し、1つだけ選んでもらう。
+
+function generateWildcardSet(name, setIndex) {
+  const speedWilds = [0, 1].map((i) => {
+    const speed = 1 + Math.floor(Math.random() * 10);
+    return { id: `${name}-wildset${setIndex}-speed-${i}-${speed}`, speed, isWild: true };
+  });
+
+  const effectPool = [EFFECT_TYPES.CHARGE, EFFECT_TYPES.GUARD, EFFECT_TYPES.ACCEL, EFFECT_TYPES.AGILE];
+  const skillWilds = [0, 1, 2].map((i) => {
     const effectType = effectPool[Math.floor(Math.random() * effectPool.length)];
     const n = rollSkillN(Math.random, effectType);
     return {
-      id: `${name}-skill-wild-${i}-${effectType}-${n}`,
+      id: `${name}-wildset${setIndex}-skill-${i}-${effectType}-${n}`,
       effectType,
       n,
       label: formatSkillLabel(effectType, n),
@@ -196,7 +205,11 @@ function generateSkillCardPool(text, name) {
     };
   });
 
-  return baseCards.concat(wildCards); // 合計9枚
+  return { speedWilds, skillWilds };
+}
+
+function generateWildcardSetOptions(name) {
+  return [0, 1, 2].map((i) => generateWildcardSet(name, i));
 }
 
 // randFn は 0以上1未満を返す関数(QR由来のrand、またはMath.random)
