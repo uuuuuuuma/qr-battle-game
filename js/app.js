@@ -710,7 +710,7 @@ function renderSelectSpeedCards() {
     <div class="screen">
       <div class="top-bar">
         <button class="icon-btn" id="backBtn">← もどる</button>
-        <div></div>
+        <button class="icon-btn" id="charInfoBtn">🪪 キャラ情報</button>
       </div>
       <div class="title" style="font-size:20px;">スピードカードを選ぶ</div>
       <div class="subtitle">12枚(うちWILDの2枚は完全ランダム)の中から、実際に使う10枚を選んでください</div>
@@ -732,6 +732,7 @@ function bindSelectSpeedCards() {
     }
     render();
   };
+  bindCharacterInfoButton();
   document.querySelectorAll('.select-grid .act-card').forEach((btn) => {
     bindTapHold(btn, {
       onTap: () => {
@@ -784,7 +785,7 @@ function renderSelectSkillCards() {
     <div class="screen">
       <div class="top-bar">
         <button class="icon-btn" id="backBtn">← もどる</button>
-        <div></div>
+        <button class="icon-btn" id="charInfoBtn">🪪 キャラ情報</button>
       </div>
       <div class="title" style="font-size:20px;">スキルカードを選ぶ</div>
       <div class="subtitle">9枚(うちWILDの3枚は完全ランダム)の中から、実際に使う6枚を選んでください(長押しで効果説明)</div>
@@ -806,6 +807,7 @@ function bindSelectSkillCards() {
     }
     render();
   };
+  bindCharacterInfoButton();
   const pool = state.playerCharacter.skillCardPool;
   document.querySelectorAll('.select-grid .act-card').forEach((btn) => {
     const card = pool.find((c) => c.id === btn.dataset.cardId);
@@ -898,8 +900,9 @@ function bindVsCharacterPopups(root, playerChar, cpuChar) {
   if (cpuEl) bindCharacterEffectsPopup(cpuEl, cpuChar);
 }
 
-// revealed を渡すと、そのインデックス(出目-1)が含まれていない面は「？」で伏せて表示する
-function renderCommandTable(table, revealed) {
+// revealed を渡すと、そのインデックス(出目-1)が含まれていない面は「？」で伏せて表示する。
+// activeIndex を渡すと、そのインデックスの面を「発動した」として色反転表示する(ラウンド終了時にクリアされる)
+function renderCommandTable(table, revealed, activeIndex) {
   const cells = table
     .map((cmd, i) => {
       if (revealed && !revealed.has(i)) {
@@ -914,7 +917,8 @@ function renderCommandTable(table, revealed) {
       else if (cmd === COMMAND_TYPES.POISON) cls = 'poison';
       else if (cmd === COMMAND_TYPES.COLLAPSE) cls = 'collapse';
       const sCls = isSCommand(cmd) ? ' s-command' : '';
-      return `<div class="command-cell ${cls}${sCls}" data-command="${escapeHtml(cmd)}"><div class="face">出目 ${i + 1}</div><div class="cmd">${cmd}</div></div>`;
+      const activeCls = activeIndex === i ? ' active' : '';
+      return `<div class="command-cell ${cls}${sCls}${activeCls}" data-command="${escapeHtml(cmd)}"><div class="face">出目 ${i + 1}</div><div class="cmd">${cmd}</div></div>`;
     })
     .join('');
   return `<div class="command-table">${cells}</div>`;
@@ -1090,6 +1094,8 @@ function bindReady() {
       awaitingDiceRoll: false,
       cpuRevealed: new Set(), // コマンド表(出目)の公開状況
       cpuSkillRevealed: new Set(), // 相手のスキルカードの公開状況(使ったら公開)
+      playerActiveFace: null, // このラウンドで発動したコマンドの面(ラウンド終了時にクリア)
+      cpuActiveFace: null,
       playerAtkBonus: 0,
       cpuAtkBonus: 0,
       playerGuardMult: null,
@@ -1132,9 +1138,9 @@ function renderBattle() {
       </div>
       ${renderBattleControls(b)}
       <div class="section-label">あなたのコマンド表(長押しで説明)</div>
-      ${renderCommandTable(state.battlePlayer.commandTable)}
+      ${renderCommandTable(state.battlePlayer.commandTable, null, b.playerActiveFace)}
       <div class="section-label">CPUのコマンド表(使われた面だけ公開・長押しで説明)</div>
-      ${renderCommandTable(state.battleCpu.commandTable, b.cpuRevealed)}
+      ${renderCommandTable(state.battleCpu.commandTable, b.cpuRevealed, b.cpuActiveFace)}
       <button class="btn secondary block" id="peekCpuCardsBtn">相手のカード一覧を見る</button>
       <div class="battle-log">${renderLog(b.log)}</div>
     </div>
@@ -1510,6 +1516,9 @@ async function onPlayerPlayCards() {
 
   if (!winnerIsPlayer) {
     b.cpuRevealed.add(dice - 1);
+    b.cpuActiveFace = dice - 1;
+  } else {
+    b.playerActiveFace = dice - 1;
   }
 
   const command = attacker.commandTable[dice - 1];
@@ -1637,7 +1646,45 @@ async function resolveRoundEnd(combatDefender) {
     return;
   }
 
+  if (b.round % 5 === 0) {
+    await runVoltageEvent();
+  }
+
   advanceToNextRound();
+}
+
+// 5ラウンドごとに発生する「ボルテージ」。お互いサイコロを振り、出目の数だけ攻撃力が永続上昇する。
+// baseAtk(刀狩り等で下がる前の基準値)も同時に引き上げ、永続バフと状態異常由来の増減を区別する。
+async function runVoltageEvent() {
+  const b = state.battle;
+  b.diceValue = null;
+  b.commandEffect = null;
+  b.arenaColor = '#ffd166';
+  b.message = '⚡ボルテージ発生！ お互いサイコロを振って攻撃力が永続上昇！';
+  render();
+  await wait(900);
+
+  const playerRoll = rollDice();
+  state.battlePlayer.atk += playerRoll;
+  state.battlePlayer.baseAtk += playerRoll;
+  b.diceValue = playerRoll;
+  b.message = `あなたのボルテージ！ 攻撃力+${playerRoll}(永続)`;
+  addLog(`⚡ボルテージ: あなたの攻撃力が+${playerRoll}された(永続)`);
+  render();
+  await wait(900);
+
+  const cpuRoll = rollDice();
+  state.battleCpu.atk += cpuRoll;
+  state.battleCpu.baseAtk += cpuRoll;
+  b.diceValue = cpuRoll;
+  b.message = `CPUのボルテージ！ 攻撃力+${cpuRoll}(永続)`;
+  addLog(`⚡ボルテージ: CPUの攻撃力が+${cpuRoll}された(永続)`);
+  render();
+  await wait(900);
+
+  b.diceValue = null;
+  b.message = '';
+  b.arenaColor = null;
 }
 
 function advanceToNextRound() {
@@ -1660,6 +1707,8 @@ function advanceToNextRound() {
   b.commandEffect = null;
   b.poisonMessages = [];
   b.poisonHitSides = [];
+  b.playerActiveFace = null;
+  b.cpuActiveFace = null;
   b.busy = false;
   render();
 }

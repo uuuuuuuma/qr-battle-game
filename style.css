@@ -306,6 +306,7 @@ body {
   user-select: none;
   -webkit-touch-callout: none;
   touch-action: manipulation;
+  transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .command-cell .face {
@@ -329,6 +330,17 @@ body {
 .command-cell.collapse .cmd { color: #ff5252; }
 .command-cell.hidden .cmd { color: var(--text-dim); }
 .command-cell.hidden { opacity: 0.6; }
+
+/* 発動したコマンドの面を色反転して分かりやすくする(ラウンド終了時に解除) */
+.command-cell.active {
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 0 14px rgba(255, 255, 255, 0.5);
+  transform: scale(1.06);
+}
+.command-cell.active .face,
+.command-cell.active .cmd {
+  color: var(--bg-1);
+}
 
 .command-cell.s-command {
   border-color: #ffd166;
